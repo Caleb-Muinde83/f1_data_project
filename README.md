@@ -345,6 +345,158 @@ dbt --version
 
 If all commands return versions, your environment is ready to run the project.
 
+
+## ☁️ Setting Up Your Google Cloud Project
+
+Follow these steps to create a GCP project, link it to billing, enable necessary APIs, and connect it to your local `gcloud` CLI.
+
+---
+
+### 1️⃣ Create a New Project
+
+You can create a project either via the **GCP Console** or the **CLI**.
+
+**Using GCP Console:**
+
+1. Go to [Google Cloud Console](https://console.cloud.google.com).
+2. Click **Project Selector → New Project**.
+3. Fill in:
+   - **Project Name:** `f1-data-project`  
+   - **Project ID:** Must be unique globally, e.g., `f1-data-project-43ver`  
+   - **Organization:** Choose **No Organization** for personal projects
+4. Click **Create**.
+
+**Using gcloud CLI:**
+
+```bash
+gcloud projects create f1-data-project-43ver --name="F1 Data Project"
+```
+
+---
+
+### 2️⃣ Link a Billing Account
+
+Billing must be enabled to activate most GCP APIs (e.g., BigQuery, Cloud Composer).
+
+**Using GCP Console:**
+
+1. Go to [Billing](https://console.cloud.google.com/billing).
+2. If you don’t have a billing account, click **Add Billing Account** and follow the instructions.
+3. Link the billing account to your project.
+
+**Using gcloud CLI (if you have a billing account):**
+
+```bash
+# List your billing accounts
+gcloud beta billing accounts list
+
+# Link your project to a billing account
+gcloud beta billing projects link f1-data-project-43ver \
+    --billing-account YOUR_BILLING_ACCOUNT_ID
+```
+
+Verify:
+
+```bash
+gcloud beta billing projects describe f1-data-project-43ver
+```
+
+---
+
+### 3️⃣ Set the Project in gcloud
+
+After the project is created and billing is linked, set it as your active project:
+
+```bash
+gcloud config set project f1-data-project-43ver
+```
+
+---
+
+### 4️⃣ Authenticate Your Local gcloud CLI
+
+**Log in your Google account:**
+
+```bash
+gcloud auth login
+```
+
+**Set Application Default Credentials** (used by Python scripts, dbt, and Airflow):
+
+```bash
+gcloud auth application-default login
+```
+
+**Optional:** Update the quota project to avoid warnings:
+
+```bash
+gcloud auth application-default set-quota-project f1-data-project-43ver
+```
+
+Verify active project:
+
+```bash
+gcloud config get-value project
+```
+
+---
+
+### 5️⃣ Enable Required APIs
+
+Enable the services needed for your data pipeline:
+
+```bash
+gcloud services enable \
+bigquery.googleapis.com \
+storage.googleapis.com \
+composer.googleapis.com \
+iam.googleapis.com \
+cloudresourcemanager.googleapis.com
+```
+
+These services provide:
+
+| Service | Purpose |
+|--------|---------|
+| **BigQuery** | Data warehouse for analytics |
+| **Cloud Storage (GCS)** | Data lake for raw and processed files |
+| **Cloud Composer** | Managed Airflow environment |
+| **IAM** | Identity and access management |
+| **Cloud Resource Manager** | Manage projects, folders, and organization resources |
+
+---
+
+### 6️⃣ Verify Setup
+
+Check your active account and project:
+
+```bash
+gcloud auth list
+gcloud config list
+```
+
+Test access:
+
+```bash
+# List BigQuery datasets
+bq ls
+
+# List GCS buckets
+gsutil ls
+```
+
+---
+
+### ✅ Next Steps
+
+Once the project is set up and connected:
+
+1. Run **OpenTofu** to provision your GCP infrastructure (GCS, BigQuery, IAM roles).  
+2. Configure **Airflow**, **dbt**, and other pipeline components.  
+3. Start building and running DAGs and dbt transformations.
+
+
+
 ## 🔀 Git Workflow & CI/CD
 
 This project follows the **Feature Branch Workflow** to keep the `main` branch stable.
