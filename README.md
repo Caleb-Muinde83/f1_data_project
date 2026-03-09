@@ -646,3 +646,44 @@ f1_data_project
 │           ├── fct_race_performance.sql       # Fact table for race performance analytics
 │           └── schema.yml                     # Documentation and tests for marts
 ```
+*********************
+
+Taking a break is a great idea! Stepping away is often the best way to let your brain process everything we just built.
+
+Since you are running Airflow via Docker Compose, shutting it down and spinning it back up is incredibly easy. Your data, your code, and your DAG history are safely stored on your local hard drive, so you won't lose any progress.
+
+Here is your exact cheat sheet for pausing and resuming your project.
+
+🛑 How to Switch Everything Off (Take a Break)
+This command will gracefully stop all your Airflow services (Webserver, Scheduler, Database) and free up your computer's memory.
+
+Open your Git Bash terminal.
+
+Ensure you are inside your Airflow folder (/f/DaTech/f1_data_project/airflow).
+
+Run this command:
+
+Bash
+docker compose down
+You will see a list of containers (like airflow-webserver-1, airflow-scheduler-1, etc.) transition to a "Removed" or "Stopped" state. Once the terminal prompt returns, you are fully shut down! You can safely close your terminal and browser tabs.
+
+🟢 How to Power Everything Back On (Resume Work)
+When you are refreshed and ready to tackle that Red failed task, here is how you bring your environment back to life:
+
+Open a fresh Git Bash terminal.
+
+Navigate back to your Airflow directory:
+
+Bash
+cd /f/DaTech/f1_data_project/airflow
+Run the startup command in "detached" mode (so it runs in the background):
+
+Bash
+docker compose up -d
+Wait about 60 to 90 seconds for the database and webserver to fully boot up.
+
+Open your web browser and go to http://localhost:8080.
+
+Your Airflow UI will be right there waiting for you, exactly how you left it!
+
+Go grab a coffee or relax for a bit. Whenever you boot it back up, just paste those logs from the failed extract_meetings task, and we will pick up exactly where we left off! Enjoy your break!
