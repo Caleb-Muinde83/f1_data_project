@@ -1,0 +1,101 @@
+version: 2
+
+sources:
+  - name: openf1_raw
+    description: "Raw JSON files extracted locally from the OpenF1 API via Airflow"
+    tables:
+      # 1. Drivers & Teams
+      - name: drivers
+        description: "Raw driver information and details"
+        meta:
+          external_location: "F:/DaTech/f1_data_project/airflow/logs/**/*drivers*.json"
+          
+      - name: championship_drivers
+        description: "Driver championship standings and points"
+        meta:
+          external_location: "F:/DaTech/f1_data_project/airflow/logs/**/*championship_drivers*.json"
+          
+      - name: championship_teams
+        description: "Constructor championship standings and points"
+        meta:
+          external_location: "F:/DaTech/f1_data_project/airflow/logs/**/*championship_teams*.json"
+
+      # 2. Race Weekend Structure
+      - name: meetings
+        description: "Grand Prix weekend metadata (locations, dates)"
+        meta:
+          external_location: "F:/DaTech/f1_data_project/airflow/logs/**/*meetings*.json"
+          
+      - name: sessions
+        description: "Specific session metadata (FP1, Quali, Race)"
+        meta:
+          external_location: "F:/DaTech/f1_data_project/airflow/logs/**/*sessions*.json"
+          
+      - name: session_result
+        description: "Final classification and results of a session"
+        meta:
+          external_location: "F:/DaTech/f1_data_project/airflow/logs/**/*session_result*.json"
+          
+      - name: starting_grid
+        description: "Starting grid positions for the race or sprint"
+        meta:
+          external_location: "F:/DaTech/f1_data_project/airflow/logs/**/*starting_grid*.json"
+
+      # 3. Track Action & Timing
+      - name: laps
+        description: "Detailed lap times, sectors, and speed traps"
+        meta:
+          external_location: "F:/DaTech/f1_data_project/airflow/logs/**/*laps*.json"
+          
+      - name: intervals
+        description: "Time gaps between cars"
+        meta:
+          external_location: "F:/DaTech/f1_data_project/airflow/logs/**/*intervals*.json"
+          
+      - name: position
+        description: "Track position updates and leaderboard changes"
+        meta:
+          external_location: "F:/DaTech/f1_data_project/airflow/logs/**/*position*.json"
+          
+      - name: overtakes
+        description: "Logged overtakes during a session"
+        meta:
+          external_location: "F:/DaTech/f1_data_project/airflow/logs/**/*overtakes*.json"
+
+      # 4. Telemetry & Environment
+      - name: car_data
+        description: "High-frequency telemetry (speed, throttle, brake, RPM, gear)"
+        meta:
+          external_location: "F:/DaTech/f1_data_project/airflow/logs/**/*car_data*.json"
+          
+      - name: location
+        description: "GPS coordinate track locations for each car"
+        meta:
+          external_location: "F:/DaTech/f1_data_project/airflow/logs/**/*location*.json"
+          
+      - name: weather
+        description: "Track and air temperature, wind, and rainfall"
+        meta:
+          external_location: "F:/DaTech/f1_data_project/airflow/logs/**/*weather*.json"
+
+      # 5. Pitlane & Strategy
+      - name: pit
+        description: "Pit lane timing and stop durations"
+        meta:
+          external_location: "F:/DaTech/f1_data_project/airflow/logs/**/*pit*.json"
+          
+      - name: stints
+        description: "Tire compound usage and stint lengths"
+        meta:
+          external_location: "F:/DaTech/f1_data_project/airflow/logs/**/*stints*.json"
+
+      # 6. Communications & Control
+      - name: team_radio
+        description: "Driver-to-pit radio communication transcripts/links"
+        meta:
+          external_location: "F:/DaTech/f1_data_project/airflow/logs/**/*team_radio*.json"
+          
+      - name: race_control
+        description: "Flags, safety cars, and incident messages"
+        meta:
+          external_location: "F:/DaTech/f1_data_project/airflow/logs/**/*race_control*.json"

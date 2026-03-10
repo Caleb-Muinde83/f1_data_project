@@ -1,0 +1,94 @@
+version: 2
+
+models:
+  - name: fct_race_results
+    description: "A fact table containing the final race results for each session, including driver and team names."
+    columns:
+      - name: session_key
+        description: "The unique identifier for the race session."
+        tests:
+          - not_null
+
+      - name: driver_number
+        description: "The unique number assigned to the driver."
+        tests:
+          - not_null
+
+      - name: final_position
+        description: "Where the driver finished the race."
+        tests:
+          - not_null
+
+  - name: fct_overtakes
+    description: "A chronological record of every overtake during a session."
+    columns:
+      - name: session_key
+        tests:
+          - not_null
+
+      - name: overtaking_driver_number
+        tests:
+          - not_null
+
+      - name: overtaken_driver_number
+        tests:
+          - not_null
+
+  - name: dim_drivers
+    description: "Master list of drivers with their latest team and biographical info."
+    columns:
+      - name: driver_number
+        description: "The permanent racing number of the driver."
+        tests:
+          - unique
+          - not_null
+      - name: full_name
+        tests:
+          - not_null
+
+  - name: fct_fastest_laps
+    description: "Calculates the personal best and overall fastest lap for drivers in each session."
+    columns:
+      - name: session_key
+        tests:
+          - not_null
+      - name: driver_number
+        tests:
+          - not_null
+      - name: fastest_lap_time_seconds
+        description: "The duration of the lap in seconds."
+        tests:
+          - not_null
+      - name: is_overall_fastest_lap
+        description: "Boolean flag indicating if this was the absolute fastest lap of the session."
+
+  - name: fct_pit_stops
+    description: "Analytics on pit lane times, flagging slow stops and ranking pit crew efficiency."
+    columns:
+      - name: session_key
+        tests:
+          - not_null
+      - name: driver_number
+        tests:
+          - not_null
+      - name: pit_lane_time_seconds
+        description: "Total time spent in the pit lane."
+        tests:
+          - not_null
+      - name: is_slow_stop
+        description: "Boolean flag for pit stops taking longer than 30 seconds."
+
+  - name: fct_weather_impact
+    description: "Joins lap times with the closest preceding weather conditions using an ASOF join."
+    columns:
+      - name: session_key
+        tests:
+          - not_null
+      - name: driver_number
+        tests:
+          - not_null
+      - name: lap_time_seconds
+        tests:
+          - not_null
+      - name: track_temperature
+        description: "Track temperature in Celsius at the start of the lap."
