@@ -567,6 +567,7 @@ For a **README.md**, the cleanest way is to present the directory structure insi
 ````markdown
 ## Project Structure
 ```text
+This is the directory structure: 
 f1_data_project
 ├── .gitignore                          # Ignores raw data, keys, Python cache, and dbt target/ folders
 ├── Makefile                            # Shortcuts (e.g., `make up` for Airflow, `make apply` for Tofu)
@@ -687,3 +688,25 @@ Open your web browser and go to http://localhost:8080.
 Your Airflow UI will be right there waiting for you, exactly how you left it!
 
 Go grab a coffee or relax for a bit. Whenever you boot it back up, just paste those logs from the failed extract_meetings task, and we will pick up exactly where we left off! Enjoy your break!
+
+
+
+1. Navigate to your Project Folder
+Open your Git Bash terminal and go to your main project directory (where your venv folder lives):
+
+Bash
+cd /f/DaTech/f1_data_project
+2. Reactivate the Virtual Environment
+Run this command to wake up your local Python environment:
+
+Bash
+source venv/Scripts/activate
+You should now see (venv) appear at the very beginning of your terminal prompt!
+
+3. Power On Airflow
+Now, move into your Airflow folder and spin up the Docker containers:
+
+Bash
+cd airflow
+docker compose up -d
+(Note: Technically, Docker runs its own isolated Python environment inside the containers, so docker compose will work whether your local venv is active or not. However, keeping your venv active is best practice so your local IDE and any local scripts you write don't throw "missing package" warnings!)
