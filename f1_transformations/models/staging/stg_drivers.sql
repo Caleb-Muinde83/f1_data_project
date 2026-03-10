@@ -15,6 +15,8 @@ renamed_and_casted AS (
         team_name,
         team_colour AS team_color_hex,
         country_code
+        -- Add this line to pass the URL through
+        headshot_url
 
     FROM raw_drivers
     -- Let's filter out any null driver numbers just in case 
