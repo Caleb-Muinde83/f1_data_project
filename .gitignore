@@ -205,3 +205,25 @@ cython_debug/
 marimo/_static/
 marimo/_lsp/
 __marimo__/
+
+
+# Terraform / OpenTofu
+.terraform/
+*.tfstate
+*.tfstate.*
+.terraform.lock.hcl
+
+# =========================================================================
+# dbt & DuckDB Large File Exclusions
+# =========================================================================
+logs/
+dbt_packages/
+dbt_modules/
+*.duckdb
+*.duckdb.wal
+*.parquet
+output/
+
+opentofu/
+*.exe
+*.duckdb
