@@ -1,5 +1,5 @@
 WITH raw_laps AS (
-    SELECT * FROM read_parquet('F:/DaTech/Production/f1_data_project/airflow/data/raw/laps_*_extracted.parquet')
+    SELECT * FROM {{ source('openf1_raw', 'laps') }}
 ),
 renamed_and_casted AS (
     SELECT

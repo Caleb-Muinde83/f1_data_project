@@ -1,5 +1,5 @@
 WITH raw_stints AS (
-    SELECT * FROM read_parquet('F:/DaTech/Production/f1_data_project/airflow/data/raw/stints_*_extracted.parquet')
+    SELECT * FROM {{ source('openf1_raw', 'stints') }}
 ),
 renamed_and_casted AS (
     SELECT

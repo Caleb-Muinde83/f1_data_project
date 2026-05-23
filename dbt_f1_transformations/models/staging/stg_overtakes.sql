@@ -1,5 +1,5 @@
 WITH raw_overtakes AS (
-    SELECT * FROM read_parquet('F:/DaTech/Production/f1_data_project/airflow/data/raw/overtakes_*_extracted.parquet')
+    SELECT * FROM {{ source('openf1_raw', 'overtakes') }}
 ),
 renamed_and_casted AS (
     SELECT

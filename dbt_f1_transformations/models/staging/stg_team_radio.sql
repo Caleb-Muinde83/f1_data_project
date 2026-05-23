@@ -1,5 +1,5 @@
 WITH raw_team_radio AS (
-    SELECT * FROM read_parquet('F:/DaTech/Production/f1_data_project/airflow/data/raw/team_radio_*_extracted.parquet')
+    SELECT * FROM {{ source('openf1_raw', 'team_radio') }}
 ),
 renamed_and_casted AS (
     SELECT

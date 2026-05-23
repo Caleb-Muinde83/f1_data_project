@@ -1,5 +1,5 @@
 WITH raw_session_result AS (
-    SELECT * FROM read_parquet('F:/DaTech/Production/f1_data_project/airflow/data/raw/session_result_*_extracted.parquet')
+    SELECT * FROM {{ source('openf1_raw', 'session_result') }}
 ),
 renamed_and_casted AS (
     SELECT

@@ -1,5 +1,5 @@
 WITH raw_meetings AS (
-    SELECT * FROM read_parquet('F:/DaTech/Production/f1_data_project/airflow/data/raw/meetings_*_extracted.parquet')
+    SELECT * FROM {{ source('openf1_raw', 'meetings') }}
 ),
 renamed_and_casted AS (
     SELECT
