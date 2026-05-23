@@ -1,0 +1,55 @@
+﻿name: Deploy to Cloud Composer
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+jobs:
+  deploy:
+    name: Deploy Airflow to Composer
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Google Cloud SDK
+        uses: google-github-actions/setup-gcloud@v1
+        with:
+          service_account_key: ${{ secrets.GCP_SA_KEY }}
+          project_id: ${{ secrets.GCP_PROJECT_ID }}
+          export_default_credentials: true
+
+      - name: Configure gcloud project and region
+        run: |
+          gcloud config set project "${{ secrets.GCP_PROJECT_ID }}"
+          gcloud config set composer/location "${{ secrets.COMPOSER_REGION }}"
+          gcloud config set compute/region "${{ secrets.GCP_REGION }}"
+
+      - name: Validate Airflow Python files
+        run: |
+          find airflow/dags -name '*.py' -print0 | xargs -0 python -m py_compile
+          find airflow/plugins -name '*.py' -print0 | xargs -0 python -m py_compile
+        shell: bash
+
+      - name: Upload DAGs to Cloud Composer
+        run: |
+          gcloud composer environments storage dags import \
+            --environment="${{ secrets.COMPOSER_ENVIRONMENT }}" \
+            --location="${{ secrets.COMPOSER_REGION }}" \
+            --source="airflow/dags"
+
+      - name: Upload plugins to Cloud Composer
+        run: |
+          gcloud composer environments storage plugins import \
+            --environment="${{ secrets.COMPOSER_ENVIRONMENT }}" \
+            --location="${{ secrets.COMPOSER_REGION }}" \
+            --source="airflow/plugins"
+
+      - name: Confirm deployment
+        run: |
+          echo "Composer deployment completed for environment: ${{ secrets.COMPOSER_ENVIRONMENT }}"
