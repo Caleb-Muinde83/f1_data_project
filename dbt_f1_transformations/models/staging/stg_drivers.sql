@@ -1,7 +1,7 @@
 WITH raw_drivers AS (
     -- dbt will compile this source function into a DuckDB command
     -- to read your local files based on the sources.yml meta tag!
-    SELECT * FROM {{ source('openf1_raw', 'drivers') }}
+    SELECT * FROM read_parquet('F:/DaTech/Production/f1_data_project/airflow/data/raw/drivers_*_extracted.parquet')
 ),
 
 renamed_and_casted AS (

@@ -1,5 +1,5 @@
 WITH raw_position AS (
-    SELECT * FROM {{ source('openf1_raw', 'position') }}
+    SELECT * FROM read_parquet('F:/DaTech/Production/f1_data_project/airflow/data/raw/position_*_extracted.parquet')
 ),
 renamed_and_casted AS (
     SELECT

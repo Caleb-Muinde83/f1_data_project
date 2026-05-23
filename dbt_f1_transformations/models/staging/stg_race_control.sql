@@ -1,5 +1,5 @@
 WITH raw_race_control AS (
-    SELECT * FROM {{ source('openf1_raw', 'race_control') }}
+    SELECT * FROM read_parquet('F:/DaTech/Production/f1_data_project/airflow/data/raw/race_control_*_extracted.parquet')
 ),
 renamed_and_casted AS (
     SELECT

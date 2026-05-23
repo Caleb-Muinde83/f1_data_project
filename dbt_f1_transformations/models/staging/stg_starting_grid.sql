@@ -1,5 +1,5 @@
 WITH raw_starting_grid AS (
-    SELECT * FROM {{ source('openf1_raw', 'starting_grid') }}
+    SELECT * FROM read_parquet('F:/DaTech/Production/f1_data_project/airflow/data/raw/starting_grid_*_extracted.parquet')
 ),
 renamed_and_casted AS (
     SELECT

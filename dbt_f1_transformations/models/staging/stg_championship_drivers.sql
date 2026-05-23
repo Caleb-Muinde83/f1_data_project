@@ -1,5 +1,5 @@
 WITH raw_championship_drivers AS (
-    SELECT * FROM {{ source('openf1_raw', 'championship_drivers') }}
+    SELECT * FROM read_parquet('F:/DaTech/Production/f1_data_project/airflow/data/raw/championship_drivers_*_extracted.parquet')
 ),
 renamed_and_casted AS (
     SELECT

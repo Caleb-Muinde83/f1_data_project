@@ -1,5 +1,5 @@
 WITH raw_pit AS (
-    SELECT * FROM {{ source('openf1_raw', 'pit') }}
+    SELECT * FROM read_parquet('F:/DaTech/Production/f1_data_project/airflow/data/raw/pit_*_extracted.parquet')
 ),
 renamed_and_casted AS (
     SELECT
