@@ -222,6 +222,7 @@ dbt_modules/
 *.duckdb
 *.duckdb.wal
 *.parquet
+duckdb_tmp/
 output/
 
 opentofu/
