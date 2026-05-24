@@ -3,7 +3,6 @@ dbt_f1_transformations:
   outputs:
     dev:
       type: duckdb
-      # Use a local DuckDB file; relative to the repo root.
-      # You can override via the DBT_DUCKDB_PATH env var.
-      path: "${DBT_DUCKDB_PATH:-f1_local_warehouse.duckdb}"
+      # Use a local DuckDB file; absolute Windows path.
+      path: "F:/DaTech/Production/f1_data_project/f1_local_warehouse.duckdb"
       threads: 1

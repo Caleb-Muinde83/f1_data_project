@@ -1,0 +1,12 @@
+{
+    "workbench.editorAssociations": {
+        "*.copilotmd": "vscode.markdown.preview.editor",
+        "*.duckdb": "default",
+        "*.parquet": "default",
+        "*.csv": "duckdb.dataFileViewer",
+        "*.tsv": "duckdb.dataFileViewer",
+        "*.xlsx": "duckdb.dataFileViewer"
+    },
+    "duckdb.databases": [],
+    "duckdb.defaultDatabase": "f1_local_warehouse"
+}

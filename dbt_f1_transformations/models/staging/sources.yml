@@ -7,76 +7,94 @@ sources:
       # 1. Drivers & Teams
       - name: drivers
         description: "Raw driver information and details"
-        external_location: "F:/DaTech/Production/f1_data_project/airflow/data/raw/drivers_*_extracted.parquet"
+        config:
+          external_location: "F:/DaTech/Production/f1_data_project/airflow/data/raw/drivers_*_extracted.parquet"
           
       - name: championship_drivers
         description: "Driver championship standings and points"
-        external_location: "F:/DaTech/Production/f1_data_project/airflow/data/raw/championship_drivers_*_extracted.parquet"
+        config:
+          external_location: "F:/DaTech/Production/f1_data_project/airflow/data/raw/championship_drivers_*_extracted.parquet"
           
       - name: championship_teams
         description: "Constructor championship standings and points"
-        external_location: "F:/DaTech/Production/f1_data_project/airflow/data/raw/championship_teams_*_extracted.parquet"
+        config:
+          external_location: "F:/DaTech/Production/f1_data_project/airflow/data/raw/championship_teams_*_extracted.parquet"
 
       # 2. Race Weekend Structure
       - name: meetings
         description: "Grand Prix weekend metadata (locations, dates)"
-        external_location: "F:/DaTech/Production/f1_data_project/airflow/data/raw/meetings_*_extracted.parquet"
+        config:
+          external_location: "F:/DaTech/Production/f1_data_project/airflow/data/raw/meetings_*_extracted.parquet"
           
       - name: sessions
         description: "Specific session metadata (FP1, Quali, Race)"
-        external_location: "F:/DaTech/Production/f1_data_project/airflow/data/raw/sessions_*_extracted.parquet"
+        config:
+          external_location: "F:/DaTech/Production/f1_data_project/airflow/data/raw/sessions_*_extracted.parquet"
           
       - name: session_result
         description: "Final classification and results of a session"
-        external_location: "F:/DaTech/Production/f1_data_project/airflow/data/raw/session_result_*_extracted.parquet"
+        config:
+          external_location: "F:/DaTech/Production/f1_data_project/airflow/data/raw/session_result_*_extracted.parquet"
           
       - name: starting_grid
         description: "Starting grid positions for the race or sprint"
-        external_location: "F:/DaTech/Production/f1_data_project/airflow/data/raw/starting_grid_*_extracted.parquet"
+        config:
+          external_location: "F:/DaTech/Production/f1_data_project/airflow/data/raw/starting_grid_*_extracted.parquet"
 
       # 3. Track Action & Timing
       - name: laps
         description: "Detailed lap times, sectors, and speed traps"
-        external_location: "F:/DaTech/Production/f1_data_project/airflow/data/raw/laps_*_extracted.parquet"
+        config:
+          external_location: "F:/DaTech/Production/f1_data_project/airflow/data/raw/laps_*_extracted.parquet"
           
       - name: intervals
         description: "Time gaps between cars"
-        external_location: "F:/DaTech/Production/f1_data_project/airflow/data/raw/intervals_*_extracted.parquet"
+        config:
+          external_location: "F:/DaTech/Production/f1_data_project/airflow/data/raw/intervals_*_extracted.parquet"
           
       - name: position
         description: "Track position updates and leaderboard changes"
-        external_location: "F:/DaTech/Production/f1_data_project/airflow/data/raw/position_*_extracted.parquet"
+        config:
+          external_location: "F:/DaTech/Production/f1_data_project/airflow/data/raw/position_*_extracted.parquet"
           
       - name: overtakes
         description: "Logged overtakes during a session"
-        external_location: "F:/DaTech/Production/f1_data_project/airflow/data/raw/overtakes_*_extracted.parquet"
+        config:
+          external_location: "F:/DaTech/Production/f1_data_project/airflow/data/raw/overtakes_*_extracted.parquet"
 
       # 4. Telemetry & Environment
       - name: car_data
         description: "High-frequency telemetry (speed, throttle, brake, RPM, gear)"
-        external_location: "F:/DaTech/Production/f1_data_project/airflow/data/raw/car_data_*_extracted.parquet"
+        config:
+          external_location: "F:/DaTech/Production/f1_data_project/airflow/data/raw/car_data_*_extracted.parquet"
           
       - name: location
         description: "GPS coordinate track locations for each car"
-        external_location: "F:/DaTech/Production/f1_data_project/airflow/data/raw/location_*_extracted.parquet"
+        config:
+          external_location: "F:/DaTech/Production/f1_data_project/airflow/data/raw/location_*_extracted.parquet"
           
       - name: weather
         description: "Track and air temperature, wind, and rainfall"
-        external_location: "F:/DaTech/Production/f1_data_project/airflow/data/raw/weather_*_extracted.parquet"
+        config:
+          external_location: "F:/DaTech/Production/f1_data_project/airflow/data/raw/weather_*_extracted.parquet"
 
       # 5. Pitlane & Strategy
       - name: pit
         description: "Pit lane timing and stop durations"
-        external_location: "F:/DaTech/Production/f1_data_project/airflow/data/raw/pit_*_extracted.parquet"
+        config:
+          external_location: "F:/DaTech/Production/f1_data_project/airflow/data/raw/pit_*_extracted.parquet"
           
       - name: stints
         description: "Tire compound usage and stint lengths"
-        external_location: "F:/DaTech/Production/f1_data_project/airflow/data/raw/stints_*_extracted.parquet"
+        config:
+          external_location: "F:/DaTech/Production/f1_data_project/airflow/data/raw/stints_*_extracted.parquet"
 
       - name: team_radio
         description: "Driver-to-pit radio communication transcripts/links"
-        external_location: "F:/DaTech/Production/f1_data_project/airflow/data/raw/team_radio_*_extracted.parquet"
+        config:
+          external_location: "F:/DaTech/Production/f1_data_project/airflow/data/raw/team_radio_*_extracted.parquet"
           
       - name: race_control
         description: "Flags, safety cars, and incident messages"
-        external_location: "F:/DaTech/Production/f1_data_project/airflow/data/raw/race_control_*_extracted.parquet"
+        config:
+          external_location: "F:/DaTech/Production/f1_data_project/airflow/data/raw/race_control_*_extracted.parquet"
