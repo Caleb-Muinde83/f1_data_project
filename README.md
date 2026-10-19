@@ -487,7 +487,7 @@ gsutil ls
 
 ---
 
-### ✅ Next Steps
+### ... Next Steps
 
 Once the project is set up and connected:
 
@@ -497,12 +497,12 @@ Once the project is set up and connected:
 
 
 
-## 🔀 Git Workflow & CI/CD
+##  Git Workflow & CI/CD
 
 This project follows the **Feature Branch Workflow** to keep the `main` branch stable.
 
 **Important rule:**  
-🚫 Never commit directly to `main`.
+ Never commit directly to `main`.
 
 ### Development Workflow
 
@@ -540,7 +540,7 @@ Once the PR is merged into `main`, **GitHub Actions** will automatically run the
 
 ---
 
-## 🚀 Current Project Progress
+##  Current Project Progress
 
 ### Completed
 
@@ -558,7 +558,7 @@ Once the PR is merged into `main`, **GitHub Actions** will automatically run the
 - [ ] Implement dbt transformations
 
 
-## 📂 Repository Structure
+##  Repository Structure
 
 The codebase is organized into distinct domains to separate infrastructure, orchestration, and business logic:
 
@@ -655,7 +655,7 @@ Since you are running Airflow via Docker Compose, shutting it down and spinning 
 
 Here is your exact cheat sheet for pausing and resuming your project.
 
-🛑 How to Switch Everything Off (Take a Break)
+ How to Switch Everything Off (Take a Break)
 This command will gracefully stop all your Airflow services (Webserver, Scheduler, Database) and free up your computer's memory.
 
 Open your Git Bash terminal.
@@ -668,7 +668,7 @@ Bash
 docker compose down
 You will see a list of containers (like airflow-webserver-1, airflow-scheduler-1, etc.) transition to a "Removed" or "Stopped" state. Once the terminal prompt returns, you are fully shut down! You can safely close your terminal and browser tabs.
 
-🟢 How to Power Everything Back On (Resume Work)
+ How to Power Everything Back On (Resume Work)
 When you are refreshed and ready to tackle that Red failed task, here is how you bring your environment back to life:
 
 Open a fresh Git Bash terminal.
