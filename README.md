@@ -1,10 +1,10 @@
 # f1_data_project
 
-# OpenF1 Data Engineering Project 🏎️📊
+# OpenF1 Data Engineering Project
 
 This repository contains the infrastructure, orchestration, and transformation code for a modern data stack that extracts, loads, and transforms Formula 1 telemetry and race data using the [OpenF1 API](https://openf1.org/).
 
-## 🏗️ Project Architecture & Tech Stack
+##  Project Architecture & Tech Stack
 
 This project implements an ELT (Extract, Load, Transform) pipeline using industry-standard tools:
 * **Source:** OpenF1 API (18 endpoints including telemetry, race control, and weather)
@@ -15,7 +15,7 @@ This project implements an ELT (Extract, Load, Transform) pipeline using industr
 
 
 
-## 💻 Local Development Prerequisites
+##  Local Development Prerequisites
 
 To run and develop this project locally, install the following system tools:
 
@@ -30,13 +30,13 @@ To run and develop this project locally, install the following system tools:
 
 ---
 
-## 🛠 Installing Local Development Prerequisites
+##  Installing Local Development Prerequisites
 
 To run this project locally, install the following tools depending on your operating system.
 
 ---
 
-# 🪟 Windows Installation
+#  Windows Installation
 
 ### 1. Install Git
 Download and install Git:
@@ -58,7 +58,7 @@ Download Python:
 https://www.python.org/downloads/
 
 During installation:
-- ✅ Check **"Add Python to PATH"**
+-  Check **"Add Python to PATH"**
 
 Verify:
 
@@ -140,7 +140,7 @@ dbt --version
 
 ---
 
-# 🍎 macOS Installation
+#  macOS Installation
 
 ### 1. Install Homebrew (Package Manager)
 
@@ -235,7 +235,7 @@ dbt --version
 
 ---
 
-# 🐧 Linux Installation (Ubuntu / Debian)
+#  Linux Installation (Ubuntu / Debian)
 
 ### 1. Install Git
 
@@ -330,7 +330,7 @@ dbt --version
 
 ---
 
-# ✅ Verify Everything
+#  Verify Everything
 
 Run the following commands to ensure everything is installed correctly:
 
@@ -346,7 +346,7 @@ dbt --version
 If all commands return versions, your environment is ready to run the project.
 
 
-## ☁️ Setting Up Your Google Cloud Project
+##  Setting Up Your Google Cloud Project
 
 Follow these steps to create a GCP project, link it to billing, enable necessary APIs, and connect it to your local `gcloud` CLI.
 
