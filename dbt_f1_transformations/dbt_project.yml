@@ -1,16 +1,7 @@
-
-# Name your project! Project names should contain only lowercase characters
-# and underscores. A good package name should reflect your organization's
-# name or the intended use of these models
 name: 'dbt_f1_transformations'
-version: '1.0.0'
-
-# This setting configures which "profile" dbt uses for this project.
+version: '1.1.0'
 profile: 'dbt_f1_transformations'
 
-# These configurations specify where dbt should look for different types of files.
-# The `model-paths` config, for example, states that models in this project can be
-# found in the "models/" directory. You probably won't need to change these!
 model-paths: ["models"]
 analysis-paths: ["analyses"]
 test-paths: ["tests"]
@@ -18,19 +9,40 @@ seed-paths: ["seeds"]
 macro-paths: ["macros"]
 snapshot-paths: ["snapshots"]
 
-clean-targets:         # directories to be removed by `dbt clean`
+clean-targets:
   - "target"
   - "dbt_packages"
 
+# ---------------------------------------------------------------------------
+# Tunable analytics assumptions. Change them here, not inside the SQL.
+# ---------------------------------------------------------------------------
+vars:
+  # Fuel burn lap-time effect (s per lap of fuel burned). ASSUMPTION: ~0.03-0.04 s/lap is a commonly
+  # quoted figure; real values vary by circuit/era. Used only for fuel_corrected_lap_time_seconds.
+  fuel_effect_seconds_per_lap: 0.035
+  # A lap is "representative" if within this multiple of the driver's median clean-lap time.
+  representative_lap_threshold: 1.07
+  drs_range_seconds: 1.0            # within this gap to the car ahead => "in DRS range"
+  dirty_air_seconds: 2.0            # within this gap => aerodynamic wake effects likely
+  slow_stop_margin_seconds: 3.0     # pit lane time above session median + margin => slow stop
+  min_stint_laps_for_degradation: 5 # regression needs at least this many representative laps
+  distance_bin_metres: 10           # resolution of the distance-domain telemetry trace
+  fastest_lap_bonus_last_year: 2024 # the bonus point was removed from the 2025 season
+  # Where the telemetry export writes partitioned Parquet (relative to the dbt process, or absolute)
+  telemetry_export_path: "{{ env_var('F1_EXPORT_PATH', 'output/telemetry_data') }}"
+  export_data: false
 
-# Configuring models
-# Full documentation: https://docs.getdbt.com/docs/configuring-models
-
-# In this example config, we tell dbt to build all models in the example/
-# directory as views. These settings can be overridden in the individual model
-# files using the `{{ config(...) }}` macro.
 models:
   dbt_f1_transformations:
-    # This tells dbt: "Make every SQL file inside the staging folder a View by default!"
     staging:
       +materialized: view
+    intermediate:
+      +materialized: table
+    marts:
+      +materialized: table
+
+seeds:
+  dbt_f1_transformations:
+    +column_types:
+      position: integer
+      points: double

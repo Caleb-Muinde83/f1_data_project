@@ -222,9 +222,20 @@ dbt_modules/
 *.duckdb
 *.duckdb.wal
 *.parquet
-duckdb_tmp/
 output/
 
 opentofu/
 *.exe
 *.duckdb
+
+# --- added: secrets, local warehouse, CI scratch ---
+airflow/.env
+.env
+.ci_raw/
+duckdb_tmp/
+.duckdb_tmp/
+airflow/data/
+dbt_f1_transformations/target/
+dbt_f1_transformations/dbt_packages/
+dbt_f1_transformations/logs/
+logs/

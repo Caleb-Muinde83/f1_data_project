@@ -1,0 +1,29 @@
+name: ci
+on:
+  pull_request:
+  push:
+    branches: [main]
+jobs:
+  dbt-and-python:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - run: pip install dbt-duckdb pyarrow pytest
+      - name: Python unit tests (extractor, manifest, GCS loader)
+        run: python -m pytest -q airflow/tests
+      - name: Compile DAG and plugin code
+        run: python -m compileall -q airflow/dags airflow/plugins
+      - name: Build a synthetic OpenF1 dataset
+        run: python dbt_f1_transformations/ci/generate_fixtures.py "$RUNNER_TEMP/f1_raw"
+      - name: dbt deps
+        working-directory: dbt_f1_transformations
+        run: dbt deps --profiles-dir . --target ci
+      - name: dbt build (all models and all tests) on the synthetic data
+        working-directory: dbt_f1_transformations
+        env:
+          F1_RAW_DATA_PATH: ${{ runner.temp }}/f1_raw
+          F1_DUCKDB_PATH: ${{ runner.temp }}/f1_ci.duckdb
+        run: dbt build --profiles-dir . --target ci

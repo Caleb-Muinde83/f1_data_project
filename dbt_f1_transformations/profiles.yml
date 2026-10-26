@@ -1,8 +1,23 @@
+# Profiles live in the project so Airflow, CI and your laptop all use the same file:
+#   dbt build --profiles-dir . --target dev        (host)
+#   dbt build --profiles-dir . --target container  (inside the Airflow container)
+#   dbt build --profiles-dir . --target ci         (GitHub Actions, synthetic fixtures)
 dbt_f1_transformations:
   target: dev
   outputs:
     dev:
       type: duckdb
-      # Use a local DuckDB file; absolute Windows path.
-      path: "F:/DaTech/Production/f1_data_project/f1_local_warehouse.duckdb"
+      path: "{{ env_var('F1_DUCKDB_PATH', 'F:/DaTech/f1_data_project/f1_local_warehouse.duckdb') }}"
       threads: 1
+      settings:
+        temp_directory: "{{ env_var('F1_DUCKDB_TEMP', 'F:/DaTech/f1_data_project/duckdb_tmp') }}"
+    container:
+      type: duckdb
+      path: "{{ env_var('F1_DUCKDB_PATH', '/opt/airflow/data/warehouse/f1_local_warehouse.duckdb') }}"
+      threads: 1
+      settings:
+        temp_directory: "/opt/airflow/data/warehouse/tmp"
+    ci:
+      type: duckdb
+      path: "{{ env_var('F1_DUCKDB_PATH', '/tmp/f1_ci.duckdb') }}"
+      threads: 2

@@ -1,25 +1,41 @@
-version: '3.8'
 x-airflow-common:
   &airflow-common
-  image: ${AIRFLOW_IMAGE_NAME:-apache/airflow:2.8.1}
+  # The plain 2.8.1 tag runs Python 3.8, which current dbt-duckdb does not support; the -python3.11 tag does.
+  image: ${AIRFLOW_IMAGE_NAME:-apache/airflow:2.8.1-python3.11}
   environment:
     &airflow-common-env
     AIRFLOW__CORE__EXECUTOR: LocalExecutor
-    AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://airflow:airflow@postgres/airflow
+    AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://${POSTGRES_USER:-airflow}:${POSTGRES_PASSWORD:?copy .env.example to .env and set POSTGRES_PASSWORD}@postgres/airflow
     AIRFLOW__CORE__LOAD_EXAMPLES: 'false'
+    AIRFLOW__CORE__FERNET_KEY: ${AIRFLOW_FERNET_KEY:-}
+    AIRFLOW__WEBSERVER__SECRET_KEY: ${AIRFLOW_WEBSERVER_SECRET_KEY:?set AIRFLOW_WEBSERVER_SECRET_KEY in .env}
+    # dbt is installed at container start for development convenience (slow start; bake a custom image for production)
+    _PIP_ADDITIONAL_REQUIREMENTS: ${AIRFLOW_EXTRA_PIP:-pyarrow dbt-duckdb>=1.10,<2}
+    # Where dbt, DuckDB and the pipeline look for things INSIDE the container
+    DBT_PROJECT_DIR: /opt/airflow/dbt/f1_data_project
+    DBT_PROFILES_DIR: /opt/airflow/dbt/f1_data_project
+    DBT_TARGET: container
+    F1_RAW_DATA_PATH: /opt/airflow/data/raw
+    F1_DUCKDB_PATH: /opt/airflow/data/warehouse/f1_local_warehouse.duckdb
+    F1_EXPORT_PATH: /opt/airflow/data/export/telemetry
+    OPENF1_OUTPUT_PATH: /opt/airflow/data/raw
+    GCS_RAW_BUCKET: ${GCS_RAW_BUCKET:-}
+    ALERT_WEBHOOK_URL: ${ALERT_WEBHOOK_URL:-}
   volumes:
     - ./dags:/opt/airflow/dags
     - ./logs:/opt/airflow/logs
     - ./plugins:/opt/airflow/plugins
     - ./requirements.txt:/opt/airflow/requirements.txt
+    - ./data:/opt/airflow/data
+    - ../dbt_f1_transformations:/opt/airflow/dbt/f1_data_project
   user: "${AIRFLOW_UID:-50000}:0"
 
 services:
   postgres:
     image: postgres:13
     environment:
-      POSTGRES_USER: airflow
-      POSTGRES_PASSWORD: airflow
+      POSTGRES_USER: ${POSTGRES_USER:-airflow}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?copy .env.example to .env and set POSTGRES_PASSWORD}
       POSTGRES_DB: airflow
     healthcheck:
       test: ["CMD", "pg_isready", "-U", "airflow"]
@@ -33,8 +49,8 @@ services:
       <<: *airflow-common-env
       _AIRFLOW_DB_UPGRADE: 'true'
       _AIRFLOW_WWW_USER_CREATE: 'true'
-      _AIRFLOW_WWW_USER_USERNAME: airflow
-      _AIRFLOW_WWW_USER_PASSWORD: airflow
+      _AIRFLOW_WWW_USER_USERNAME: ${AIRFLOW_ADMIN_USER:-airflow}
+      _AIRFLOW_WWW_USER_PASSWORD: ${AIRFLOW_ADMIN_PASSWORD:?copy .env.example to .env and set AIRFLOW_ADMIN_PASSWORD}
     depends_on:
       postgres:
         condition: service_healthy
@@ -43,7 +59,7 @@ services:
     <<: *airflow-common
     command: webserver
     ports:
-      - "8080:8080"
+      - "127.0.0.1:8080:8080"   # bound to localhost only
     depends_on:
       airflow-init:
         condition: service_completed_successfully
