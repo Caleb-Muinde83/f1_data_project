@@ -1,0 +1,1 @@
+gcp_project_id = "f1-data-project-43ver"

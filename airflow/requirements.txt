@@ -1,3 +1,5 @@
 apache-airflow-providers-google==10.12.0
 requests==2.31.0
-pandas==2.1.4
+pyarrow
+# pandas removed: nothing imports it, and pandas>=2.1 needs Python>=3.9 while the plain apache/airflow:2.8.1 tag runs Python 3.8.
+# NOTE: the compose file only MOUNTS this file; dependencies are installed through _PIP_ADDITIONAL_REQUIREMENTS there.

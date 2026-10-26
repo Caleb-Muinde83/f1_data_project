@@ -6,9 +6,10 @@ renamed_and_casted AS (
         CAST(session_key AS INTEGER) AS session_key,
         CAST(meeting_key AS INTEGER) AS meeting_key,
         CAST(driver_number AS INTEGER) AS driver_number,
-        
+
         CAST(lap_number AS INTEGER) AS lap_number,
-        pit_duration
+        CAST(date AS TIMESTAMP) AS pit_timestamp,
+        TRY_CAST(pit_duration AS DOUBLE) AS pit_duration
     FROM raw_pit
     WHERE driver_number IS NOT NULL
 )

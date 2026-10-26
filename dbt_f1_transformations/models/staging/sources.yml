@@ -7,94 +7,95 @@ sources:
       # 1. Drivers & Teams
       - name: drivers
         description: "Raw driver information and details"
-        config:
-          external_location: "F:/DaTech/Production/f1_data_project/airflow/data/raw/drivers_*_extracted.parquet"
+        meta:
+          external_location: "read_parquet('{{ env_var('F1_RAW_DATA_PATH', 'F:/DaTech/f1_data_project/airflow/data/raw') }}/drivers_*_extracted.parquet', union_by_name=true)"
           
       - name: championship_drivers
         description: "Driver championship standings and points"
-        config:
-          external_location: "F:/DaTech/Production/f1_data_project/airflow/data/raw/championship_drivers_*_extracted.parquet"
+        meta:
+          external_location: "read_parquet('{{ env_var('F1_RAW_DATA_PATH', 'F:/DaTech/f1_data_project/airflow/data/raw') }}/championship_drivers_*_extracted.parquet', union_by_name=true)"
           
       - name: championship_teams
         description: "Constructor championship standings and points"
-        config:
-          external_location: "F:/DaTech/Production/f1_data_project/airflow/data/raw/championship_teams_*_extracted.parquet"
+        meta:
+          external_location: "read_parquet('{{ env_var('F1_RAW_DATA_PATH', 'F:/DaTech/f1_data_project/airflow/data/raw') }}/championship_teams_*_extracted.parquet', union_by_name=true)"
 
       # 2. Race Weekend Structure
       - name: meetings
         description: "Grand Prix weekend metadata (locations, dates)"
-        config:
-          external_location: "F:/DaTech/Production/f1_data_project/airflow/data/raw/meetings_*_extracted.parquet"
+        meta:
+          external_location: "read_parquet('{{ env_var('F1_RAW_DATA_PATH', 'F:/DaTech/f1_data_project/airflow/data/raw') }}/meetings_*_extracted.parquet', union_by_name=true)"
           
       - name: sessions
         description: "Specific session metadata (FP1, Quali, Race)"
-        config:
-          external_location: "F:/DaTech/Production/f1_data_project/airflow/data/raw/sessions_*_extracted.parquet"
+        meta:
+          external_location: "read_parquet('{{ env_var('F1_RAW_DATA_PATH', 'F:/DaTech/f1_data_project/airflow/data/raw') }}/sessions_*_extracted.parquet', union_by_name=true)"
           
       - name: session_result
         description: "Final classification and results of a session"
-        config:
-          external_location: "F:/DaTech/Production/f1_data_project/airflow/data/raw/session_result_*_extracted.parquet"
+        meta:
+          external_location: "read_parquet('{{ env_var('F1_RAW_DATA_PATH', 'F:/DaTech/f1_data_project/airflow/data/raw') }}/session_result_*_extracted.parquet', union_by_name=true)"
           
       - name: starting_grid
         description: "Starting grid positions for the race or sprint"
-        config:
-          external_location: "F:/DaTech/Production/f1_data_project/airflow/data/raw/starting_grid_*_extracted.parquet"
+        meta:
+          external_location: "read_parquet('{{ env_var('F1_RAW_DATA_PATH', 'F:/DaTech/f1_data_project/airflow/data/raw') }}/starting_grid_*_extracted.parquet', union_by_name=true)"
 
       # 3. Track Action & Timing
       - name: laps
         description: "Detailed lap times, sectors, and speed traps"
-        config:
-          external_location: "F:/DaTech/Production/f1_data_project/airflow/data/raw/laps_*_extracted.parquet"
+        meta:
+          external_location: "read_parquet('{{ env_var('F1_RAW_DATA_PATH', 'F:/DaTech/f1_data_project/airflow/data/raw') }}/laps_*_extracted.parquet', union_by_name=true)"
           
       - name: intervals
         description: "Time gaps between cars"
-        config:
-          external_location: "F:/DaTech/Production/f1_data_project/airflow/data/raw/intervals_*_extracted.parquet"
+        meta:
+          external_location: "read_parquet('{{ env_var('F1_RAW_DATA_PATH', 'F:/DaTech/f1_data_project/airflow/data/raw') }}/intervals_*_extracted.parquet', union_by_name=true)"
           
       - name: position
         description: "Track position updates and leaderboard changes"
-        config:
-          external_location: "F:/DaTech/Production/f1_data_project/airflow/data/raw/position_*_extracted.parquet"
+        meta:
+          external_location: "read_parquet('{{ env_var('F1_RAW_DATA_PATH', 'F:/DaTech/f1_data_project/airflow/data/raw') }}/position_*_extracted.parquet', union_by_name=true)"
           
       - name: overtakes
         description: "Logged overtakes during a session"
-        config:
-          external_location: "F:/DaTech/Production/f1_data_project/airflow/data/raw/overtakes_*_extracted.parquet"
+        meta:
+          external_location: "read_parquet('{{ env_var('F1_RAW_DATA_PATH', 'F:/DaTech/f1_data_project/airflow/data/raw') }}/overtakes_*_extracted.parquet', union_by_name=true)"
 
       # 4. Telemetry & Environment
       - name: car_data
         description: "High-frequency telemetry (speed, throttle, brake, RPM, gear)"
-        config:
-          external_location: "F:/DaTech/Production/f1_data_project/airflow/data/raw/car_data_*_extracted.parquet"
+        meta:
+          external_location: "read_parquet('{{ env_var('F1_RAW_DATA_PATH', 'F:/DaTech/f1_data_project/airflow/data/raw') }}/car_data_*_extracted.parquet', union_by_name=true)"
           
       - name: location
         description: "GPS coordinate track locations for each car"
-        config:
-          external_location: "F:/DaTech/Production/f1_data_project/airflow/data/raw/location_*_extracted.parquet"
+        meta:
+          external_location: "read_parquet('{{ env_var('F1_RAW_DATA_PATH', 'F:/DaTech/f1_data_project/airflow/data/raw') }}/location_*_extracted.parquet', union_by_name=true)"
           
       - name: weather
         description: "Track and air temperature, wind, and rainfall"
-        config:
-          external_location: "F:/DaTech/Production/f1_data_project/airflow/data/raw/weather_*_extracted.parquet"
+        meta:
+          external_location: "read_parquet('{{ env_var('F1_RAW_DATA_PATH', 'F:/DaTech/f1_data_project/airflow/data/raw') }}/weather_*_extracted.parquet', union_by_name=true)"
 
       # 5. Pitlane & Strategy
       - name: pit
         description: "Pit lane timing and stop durations"
-        config:
-          external_location: "F:/DaTech/Production/f1_data_project/airflow/data/raw/pit_*_extracted.parquet"
+        meta:
+          external_location: "read_parquet('{{ env_var('F1_RAW_DATA_PATH', 'F:/DaTech/f1_data_project/airflow/data/raw') }}/pit_*_extracted.parquet', union_by_name=true)"
           
       - name: stints
         description: "Tire compound usage and stint lengths"
-        config:
-          external_location: "F:/DaTech/Production/f1_data_project/airflow/data/raw/stints_*_extracted.parquet"
+        meta:
+          external_location: "read_parquet('{{ env_var('F1_RAW_DATA_PATH', 'F:/DaTech/f1_data_project/airflow/data/raw') }}/stints_*_extracted.parquet', union_by_name=true)"
 
+      # 6. Communications & Control
       - name: team_radio
         description: "Driver-to-pit radio communication transcripts/links"
-        config:
-          external_location: "F:/DaTech/Production/f1_data_project/airflow/data/raw/team_radio_*_extracted.parquet"
+        meta:
+          external_location: "read_parquet('{{ env_var('F1_RAW_DATA_PATH', 'F:/DaTech/f1_data_project/airflow/data/raw') }}/team_radio_*_extracted.parquet', union_by_name=true)"
           
       - name: race_control
         description: "Flags, safety cars, and incident messages"
-        config:
-          external_location: "F:/DaTech/Production/f1_data_project/airflow/data/raw/race_control_*_extracted.parquet"
+        meta:
+          external_location: "read_parquet('{{ env_var('F1_RAW_DATA_PATH', 'F:/DaTech/f1_data_project/airflow/data/raw') }}/race_control_*_extracted.parquet', union_by_name=true)"

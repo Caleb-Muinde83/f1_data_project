@@ -1,0 +1,21 @@
+version: 2
+
+models:
+  - name: int_lap_context
+    description: >
+      The analytical spine: one row per driver per lap with stint/tyre, pit flags, track status, weather,
+      position, gaps and pace-normalisation flags. Every mart pace/strategy model reads from here.
+    data_tests:
+      - unique_combination_of_columns: {arguments: {combination_of_columns: [session_key, driver_number, lap_number]}}
+    columns:
+      - name: lap_start_ts
+        description: "Lap start time (OpenF1 date_start). The alignment key for all time-based joins."
+      - name: is_representative_lap
+        description: "Clean timed lap within var representative_lap_threshold x the driver's median clean lap."
+
+  - name: int_track_status_periods
+    description: "SC / VSC / Red periods rebuilt from race control messages (approximate end for SC; see model header)."
+    columns:
+      - name: track_status
+        data_tests:
+          - accepted_values: {arguments: {values: ['SC', 'VSC', 'RED']}}

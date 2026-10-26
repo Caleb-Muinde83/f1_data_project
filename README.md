@@ -1,10 +1,10 @@
 # f1_data_project
 
-# OpenF1 Data Engineering Project
+# OpenF1 Data Engineering Project 🏎️📊
 
 This repository contains the infrastructure, orchestration, and transformation code for a modern data stack that extracts, loads, and transforms Formula 1 telemetry and race data using the [OpenF1 API](https://openf1.org/).
 
-##  Project Architecture & Tech Stack
+## 🏗️ Project Architecture & Tech Stack
 
 This project implements an ELT (Extract, Load, Transform) pipeline using industry-standard tools:
 * **Source:** OpenF1 API (18 endpoints including telemetry, race control, and weather)
@@ -15,7 +15,7 @@ This project implements an ELT (Extract, Load, Transform) pipeline using industr
 
 
 
-##  Local Development Prerequisites
+## 💻 Local Development Prerequisites
 
 To run and develop this project locally, install the following system tools:
 
@@ -30,13 +30,13 @@ To run and develop this project locally, install the following system tools:
 
 ---
 
-##  Installing Local Development Prerequisites
+## 🛠 Installing Local Development Prerequisites
 
 To run this project locally, install the following tools depending on your operating system.
 
 ---
 
-#  Windows Installation
+# 🪟 Windows Installation
 
 ### 1. Install Git
 Download and install Git:
@@ -58,7 +58,7 @@ Download Python:
 https://www.python.org/downloads/
 
 During installation:
--  Check **"Add Python to PATH"**
+- ✅ Check **"Add Python to PATH"**
 
 Verify:
 
@@ -140,7 +140,7 @@ dbt --version
 
 ---
 
-#  macOS Installation
+# 🍎 macOS Installation
 
 ### 1. Install Homebrew (Package Manager)
 
@@ -235,7 +235,7 @@ dbt --version
 
 ---
 
-#  Linux Installation (Ubuntu / Debian)
+# 🐧 Linux Installation (Ubuntu / Debian)
 
 ### 1. Install Git
 
@@ -330,7 +330,7 @@ dbt --version
 
 ---
 
-#  Verify Everything
+# ✅ Verify Everything
 
 Run the following commands to ensure everything is installed correctly:
 
@@ -346,7 +346,7 @@ dbt --version
 If all commands return versions, your environment is ready to run the project.
 
 
-##  Setting Up Your Google Cloud Project
+## ☁️ Setting Up Your Google Cloud Project
 
 Follow these steps to create a GCP project, link it to billing, enable necessary APIs, and connect it to your local `gcloud` CLI.
 
@@ -487,7 +487,7 @@ gsutil ls
 
 ---
 
-### ... Next Steps
+### ✅ Next Steps
 
 Once the project is set up and connected:
 
@@ -497,12 +497,12 @@ Once the project is set up and connected:
 
 
 
-##  Git Workflow & CI/CD
+## 🔀 Git Workflow & CI/CD
 
 This project follows the **Feature Branch Workflow** to keep the `main` branch stable.
 
 **Important rule:**  
- Never commit directly to `main`.
+🚫 Never commit directly to `main`.
 
 ### Development Workflow
 
@@ -540,7 +540,7 @@ Once the PR is merged into `main`, **GitHub Actions** will automatically run the
 
 ---
 
-##  Current Project Progress
+## 🚀 Current Project Progress
 
 ### Completed
 
@@ -558,7 +558,7 @@ Once the PR is merged into `main`, **GitHub Actions** will automatically run the
 - [ ] Implement dbt transformations
 
 
-##  Repository Structure
+## 📂 Repository Structure
 
 The codebase is organized into distinct domains to separate infrastructure, orchestration, and business logic:
 
@@ -655,7 +655,7 @@ Since you are running Airflow via Docker Compose, shutting it down and spinning 
 
 Here is your exact cheat sheet for pausing and resuming your project.
 
- How to Switch Everything Off (Take a Break)
+🛑 How to Switch Everything Off (Take a Break)
 This command will gracefully stop all your Airflow services (Webserver, Scheduler, Database) and free up your computer's memory.
 
 Open your Git Bash terminal.
@@ -668,7 +668,7 @@ Bash
 docker compose down
 You will see a list of containers (like airflow-webserver-1, airflow-scheduler-1, etc.) transition to a "Removed" or "Stopped" state. Once the terminal prompt returns, you are fully shut down! You can safely close your terminal and browser tabs.
 
- How to Power Everything Back On (Resume Work)
+🟢 How to Power Everything Back On (Resume Work)
 When you are refreshed and ready to tackle that Red failed task, here is how you bring your environment back to life:
 
 Open a fresh Git Bash terminal.
@@ -710,3 +710,21 @@ Bash
 cd airflow
 docker compose up -d
 (Note: Technically, Docker runs its own isolated Python environment inside the containers, so docker compose will work whether your local venv is active or not. However, keeping your venv active is best practice so your local IDE and any local scripts you write don't throw "missing package" warnings!)
+
+---
+
+## What changed in this version (analytics, data quality, pipeline)
+
+See **docs/ANALYTICS_GUIDE.md** for the model catalogue, the assumptions behind each number, what is still not built, and a first-run checklist for real data. Example analyst queries are in **docs/example_queries.sql**.
+
+Quick start for the new test harness (no API calls, no Docker):
+
+```bash
+make ci-test        # synthetic OpenF1 data -> Python unit tests + full dbt build and tests
+```
+
+* **Secrets are no longer in the compose file.** Copy `airflow/.env.example` to `airflow/.env` and set the passwords/keys before `docker compose up`.
+* **The Airflow image is now `apache/airflow:2.8.1-python3.11`** (the plain 2.8.1 tag is Python 3.8, which current dbt-duckdb does not support).
+* **Paths are parameterised**: `F1_RAW_DATA_PATH`, `F1_DUCKDB_PATH`, `F1_EXPORT_PATH`; the old hard-coded `F:/...` values remain as the defaults for the `dev` target.
+* `dbt build --profiles-dir . --target dev|container|ci` (see `dbt_f1_transformations/profiles.yml`).
+* **Not exercised in this repo's tests:** the Docker containers, dbt-inside-Airflow, the GCS loader against real GCS, the Composer deploy script and workflow, the Cosmos DAG, and the OpenTofu BigQuery datasets.

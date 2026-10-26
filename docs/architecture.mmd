@@ -1,0 +1,66 @@
+graph TD
+    %% Source Level
+    API[<b>OpenF1 REST API</b><br/>18 Endpoints] 
+    
+    %% Ingestion Level
+    subgraph Orchestration_Layer [<b>Ingestion & Orchestration (Airflow)</b>]
+        AF_Hook[Custom OpenF1 Hook]
+        AF_Ext[Universal Extractor Module]
+        AF_Pool[Airflow Pool: 2 Slots]
+    end
+
+    %% Storage Level
+    subgraph Data_Lake [<b>Data Lake (Raw Storage)</b>]
+        Raw_JSON[<b>Raw JSON Files</b><br/>Partitioned by Session/Date]
+        Local_Logs[Local logs/ folder]
+        GCS[Google Cloud Storage]
+    end
+
+    %% Transformation Level
+    subgraph DBT_Transformation_Layers [<b>dbt Transformation Layer (DuckDB/BigQuery)</b>]
+        
+        subgraph Staging_Layer [<b>Staging Models (stg_*)</b>]
+            direction TB
+            S_Drivers[stg_drivers]
+            S_Laps[stg_laps]
+            S_Weather[stg_weather]
+            S_Results[stg_session_result]
+            S_Overtakes[stg_overtakes]
+        end
+
+        subgraph Intermediate_Layer [<b>Intermediate Models (int_*)</b>]
+            direction TB
+            Int_Telemetry[int_driver_lap_telemetry]
+        end
+
+        subgraph Marts_Layer [<b>Marts Models (fct_ / dim_ )</b>]
+            direction TB
+            Dim_Drivers[<b>dim_drivers</b><br/>Master Driver Dimensions]
+            Fct_Results[<b>fct_race_results</b><br/>Session Leaderboards]
+            Fct_Overtakes[<b>fct_overtakes</b><br/>Attacker vs Defender]
+            Fct_Weather[<b>fct_weather_impact</b><br/>ASOF Join Analysis]
+        end
+    end
+
+    %% Consumption Level
+    BI[<b>BI & Analytics</b><br/>DBeaver, Looker, VS Code Client]
+
+    %% Data Movement Connections
+    API --> AF_Hook [1, 2]
+    AF_Hook --> AF_Ext [3]
+    AF_Ext --> Local_Logs [4, 5]
+    AF_Ext --> GCS [1]
+    
+    Local_Logs --> S_Drivers & S_Laps & S_Weather & S_Results & S_Overtakes [6, 7]
+    GCS --> S_Drivers & S_Laps & S_Weather & S_Results & S_Overtakes [1, 8]
+
+    S_Drivers --> Dim_Drivers [9]
+    S_Drivers --> Fct_Results & Fct_Overtakes & Fct_Weather [10-12]
+    S_Laps --> Int_Telemetry & Fct_Weather [12]
+    S_Weather --> Fct_Weather [12]
+    S_Results --> Fct_Results [10]
+    S_Overtakes --> Fct_Overtakes [11]
+    
+    Dim_Drivers --> Fct_Results & Fct_Overtakes & Fct_Weather [10-12]
+    
+    Marts_Layer --> BI [13-15]

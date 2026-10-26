@@ -1,92 +1,189 @@
 version: 2
 
+# Grain tests (unique_combination_of_columns) are ERRORS: a duplicated grain silently corrupts every downstream
+# aggregate. Plausibility checks live in tests/ and are warnings where real-world data can legitimately surprise.
+
 models:
-  - name: fct_race_results
-    description: "A fact table containing the final race results for each session, including driver and team names."
-    columns:
-      - name: session_key
-        description: "The unique identifier for the race session."
-        tests:
-          - not_null
-
-      - name: driver_number
-        description: "The unique number assigned to the driver."
-        tests:
-          - not_null
-
-      - name: final_position
-        description: "Where the driver finished the race."
-
-  - name: fct_overtakes
-    description: "A chronological record of every overtake during a session."
-    columns:
-      - name: session_key
-        tests:
-          - not_null
-
-      - name: overtaking_driver_number
-        tests:
-          - not_null
-
-      - name: overtaken_driver_number
-        tests:
-          - not_null
-
   - name: dim_drivers
-    description: "Master list of drivers with their latest team and biographical info."
+    description: "Latest known identity and team per driver number. For team at a point in time use dim_driver_session."
     columns:
       - name: driver_number
-        description: "The permanent racing number of the driver."
-        tests:
-          - unique
-          - not_null
+        data_tests: [unique, not_null]
       - name: full_name
-        tests:
+        data_tests: [not_null]
+
+  - name: dim_driver_session
+    description: "Driver identity and team for each session (keeps mid-season team changes)."
+    data_tests:
+      - unique_combination_of_columns: {arguments: {combination_of_columns: [session_key, driver_number]}}
+    columns:
+      - name: session_key
+        data_tests:
+          - relationships: {arguments: {to: ref('dim_sessions'), field: session_key}}
+
+  - name: dim_sessions
+    description: "Every session enriched with its meeting and circuit."
+    columns:
+      - name: session_key
+        data_tests: [unique, not_null]
+      - name: session_type
+        data_tests:
+          - accepted_values:
+              arguments:
+                values: ['Practice', 'Qualifying', 'Race', 'Sprint', 'Sprint Qualifying', 'Sprint Shootout']
+              config: {severity: warn}
+
+  - name: dim_circuits
+    description: "One row per circuit. No corner geometry (not provided by OpenF1)."
+    columns:
+      - name: circuit_key
+        data_tests: [unique, not_null]
+
+  - name: fct_lap_performance
+    description: "Lap-level pace with tyre, track status and normalisation flags. Filter is_representative_lap for pace work."
+    data_tests:
+      - unique_combination_of_columns: {arguments: {combination_of_columns: [session_key, driver_number, lap_number]}}
+    columns:
+      - name: session_key
+        data_tests:
           - not_null
+          - relationships: {arguments: {to: ref('dim_sessions'), field: session_key}}
+      - name: track_status
+        data_tests:
+          - accepted_values: {arguments: {values: ['GREEN', 'YELLOW', 'VSC', 'SC', 'RED']}}
+      - name: tyre_compound
+        data_tests:
+          - accepted_values:
+              arguments: {values: ['SOFT', 'MEDIUM', 'HARD', 'INTERMEDIATE', 'WET', 'UNKNOWN', 'TEST_UNKNOWN']}
+              config: {severity: warn}
+      - name: fuel_corrected_lap_time_seconds
+        description: "ASSUMPTION-DRIVEN: lap time minus var fuel_effect_seconds_per_lap x laps remaining. Race/Sprint only."
 
   - name: fct_fastest_laps
-    description: "Calculates the personal best and overall fastest lap for drivers in each session."
+    description: "Best lap, personal-best sectors, theoretical best lap and ranking per driver per session."
+    data_tests:
+      - unique_combination_of_columns: {arguments: {combination_of_columns: [session_key, driver_number]}}
     columns:
-      - name: session_key
-        tests:
-          - not_null
-      - name: driver_number
-        tests:
-          - not_null
       - name: fastest_lap_time_seconds
-        description: "The duration of the lap in seconds."
-        tests:
-          - not_null
+        data_tests: [not_null]
+      - name: theoretical_best_lap_seconds
+        description: "Sum of the driver's best three sectors (may be NULL if a sector time is missing)."
       - name: is_overall_fastest_lap
-        description: "Boolean flag indicating if this was the absolute fastest lap of the session."
+        description: "TRUE for the driver holding the session's fastest lap."
+
+  - name: fct_stints
+    description: "One row per stint with pace and tyre degradation (seconds lost per lap of tyre age)."
+    data_tests:
+      - unique_combination_of_columns: {arguments: {combination_of_columns: [session_key, driver_number, stint_number]}}
+    columns:
+      - name: degradation_seconds_per_lap
+        description: "Regression slope over representative laps; NULL when fewer than var min_stint_laps_for_degradation."
+
+  - name: fct_tire_strategy
+    description: "One row per driver per session: compound sequence, stop count and stint lengths."
+    data_tests:
+      - unique_combination_of_columns: {arguments: {combination_of_columns: [session_key, driver_number]}}
 
   - name: fct_pit_stops
-    description: "Analytics on pit lane times, flagging slow stops and ranking pit crew efficiency."
+    description: "One row per pit stop with time lost, position change and slow-stop flag."
+    data_tests:
+      - unique_combination_of_columns: {arguments: {combination_of_columns: [session_key, driver_number, stop_number]}}
+    columns:
+      - name: pit_lane_time_seconds
+        description: "Pit entry to exit as reported by OpenF1 (NOT stationary time)."
+        data_tests: [not_null]
+      - name: time_lost_seconds
+        description: "In-lap + out-lap minus 2x the driver's median clean lap. Not meaningful under SC/VSC (see is_under_neutralisation)."
+
+  - name: fct_penalties
+    description: "Penalties parsed from race control messages; unparsed fields are NULL."
     columns:
       - name: session_key
-        tests:
-          - not_null
-      - name: driver_number
-        tests:
-          - not_null
-      - name: pit_lane_time_seconds
-        description: "Total time spent in the pit lane."
-        tests:
-          - not_null
-      - name: is_slow_stop
-        description: "Boolean flag for pit stops taking longer than 30 seconds."
+        data_tests: [not_null]
+
+  - name: fct_lap_incidents
+    description: "Lap-level track status and race control activity matched by time window."
+    data_tests:
+      - unique_combination_of_columns: {arguments: {combination_of_columns: [session_key, driver_number, lap_number]}}
+
+  - name: fct_race_intervals
+    description: "Gap time series. is_in_drs_range is a proxy (<= var drs_range_seconds), not the official detection."
+    data_tests:
+      - unique_combination_of_columns: {arguments: {combination_of_columns: [session_key, driver_number, interval_timestamp]}}
+
+  - name: fct_lap_gaps
+    description: "Time-weighted DRS-range / dirty-air exposure per driver per lap."
+    data_tests:
+      - unique_combination_of_columns: {arguments: {combination_of_columns: [session_key, driver_number, lap_number]}}
 
   - name: fct_weather_impact
-    description: "Joins lap times with the closest preceding weather conditions using an ASOF join."
+    description: "Each lap with the weather at lap start (ASOF join) plus session averages."
+    data_tests:
+      - unique_combination_of_columns: {arguments: {combination_of_columns: [session_key, driver_number, lap_number]}}
+
+  - name: fct_race_results
+    description: "Classification, status, points (current scales) and qualifying split times."
+    data_tests:
+      - unique_combination_of_columns: {arguments: {combination_of_columns: [session_key, driver_number]}}
+    columns:
+      - name: classification_status
+        data_tests:
+          - accepted_values: {arguments: {values: ['Finished', 'Lapped', 'DNF', 'DNS', 'DSQ']}}
+
+  - name: fct_points_progression
+    description: "Cumulative season points per driver after each Race/Sprint, from fct_race_results."
+    data_tests:
+      - unique_combination_of_columns: {arguments: {combination_of_columns: [session_key, driver_number]}}
+
+  - name: fct_overtakes
+    description: "Overtakes with lap, tyre, DRS and pit-cycle context."
     columns:
       - name: session_key
-        tests:
-          - not_null
-      - name: driver_number
-        tests:
-          - not_null
-      - name: lap_time_seconds
-        tests:
-          - not_null
-      - name: track_temperature
-        description: "Track temperature in Celsius at the start of the lap."
+        data_tests: [not_null]
+      - name: overtaking_driver_number
+        data_tests: [not_null]
+      - name: overtaken_driver_number
+        data_tests: [not_null]
+
+  - name: fct_race_trace
+    description: "Gap to leader per lap from cumulative lap time (race trace)."
+    data_tests:
+      - unique_combination_of_columns: {arguments: {combination_of_columns: [session_key, driver_number, lap_number]}}
+
+  - name: fct_telemetry
+    description: >
+      Car telemetry with ASOF-joined position and lap number. Incremental by session.
+      Uniqueness is deliberately not tested here (tens of millions of rows); see assert_telemetry_speed_plausible.
+    columns:
+      - name: session_key
+        data_tests: [not_null]
+      - name: telemetry_timestamp
+        data_tests: [not_null]
+
+  - name: fct_telemetry_lap_summary
+    description: "Per-lap telemetry KPIs (top speed, throttle/brake application, braking zones, DRS, gear usage)."
+    data_tests:
+      - unique_combination_of_columns: {arguments: {combination_of_columns: [session_key, driver_number, lap_number]}}
+
+  - name: fct_telemetry_distance_trace
+    description: "Telemetry on a distance axis (var distance_bin_metres) for lap-to-lap comparison."
+    data_tests:
+      - unique_combination_of_columns: {arguments: {combination_of_columns: [session_key, driver_number, lap_number, distance_bin]}}
+
+  - name: fct_lap_time_delta_trace
+    description: "Each driver's best lap vs the session fastest lap along the lap distance."
+
+  - name: fct_championship_standings
+    description: "Driver standings snapshots from the (beta) OpenF1 championship endpoint."
+    columns:
+      - name: session_key
+        data_tests: [not_null]
+
+  - name: fct_constructor_standings
+    description: "Constructor standings snapshots from the (beta) OpenF1 championship endpoint."
+
+  - name: fct_driver_positions
+    description: "Position change events with the previous position."
+
+  - name: fct_team_radio
+    description: "Team radio recording metadata (no transcription)."
