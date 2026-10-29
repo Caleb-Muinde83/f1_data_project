@@ -12,7 +12,7 @@ SELECT
     track_status, is_green_flag_lap, is_representative_lap,
     fuel_corrected_lap_time_seconds,
     delta_to_driver_median_seconds,
-    lap_time_seconds - MIN(lap_time_seconds) FILTER (WHERE is_representative_lap) OVER (PARTITION BY session_key)
+    lap_time_seconds - MIN(CASE WHEN is_representative_lap THEN lap_time_seconds END) OVER (PARTITION BY session_key)
         AS delta_to_session_best_representative_seconds,
     position_start, position_end,
     gap_to_leader_end_seconds, gap_to_car_ahead_end_seconds

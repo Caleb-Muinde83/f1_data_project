@@ -9,7 +9,7 @@ SELECT
         AS track_temperature_change_since_first_lap,
     AVG(l.air_temperature) OVER (PARTITION BY l.session_key) AS avg_air_temperature,
     AVG(l.track_temperature) OVER (PARTITION BY l.session_key) AS avg_track_temperature,
-    BOOL_OR(l.is_raining_at_lap_start) OVER (PARTITION BY l.session_key) AS rained_during_session,
+    {{ f1_bool_or('l.is_raining_at_lap_start') }} OVER (PARTITION BY l.session_key) AS rained_during_session,
     l.track_status, l.is_representative_lap, l.delta_to_driver_median_seconds
 FROM {{ ref('int_lap_context') }} l
 WHERE l.lap_time_seconds IS NOT NULL

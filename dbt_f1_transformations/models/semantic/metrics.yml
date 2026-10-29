@@ -1,0 +1,102 @@
+version: 2
+
+metrics:
+  # ---- pace ----
+  - name: laps_driven
+    label: Laps driven
+    type: simple
+    type_params: {measure: lap_count}
+  - name: avg_lap_time_seconds
+    label: Average lap time (all laps)
+    description: "Includes in/out/safety-car laps. For pace comparisons use avg_representative_lap_time_seconds."
+    type: simple
+    type_params: {measure: lap_time_avg}
+  - name: avg_representative_lap_time_seconds
+    label: Average representative lap time
+    description: "Clean laps only (no first/in/out/yellow/SC/VSC/red, within the representative-lap threshold)."
+    type: simple
+    type_params: {measure: lap_time_avg}
+    filter: "{{ Dimension('lap__is_representative_lap') }} = true"
+  - name: avg_fuel_corrected_representative_lap_time_seconds
+    label: Average fuel-corrected representative lap time
+    description: "Fuel correction rests on the var fuel_effect_seconds_per_lap assumption."
+    type: simple
+    type_params: {measure: fuel_corrected_lap_time_avg}
+    filter: "{{ Dimension('lap__is_representative_lap') }} = true"
+  - name: best_lap_time_seconds
+    label: Best lap time
+    type: simple
+    type_params: {measure: lap_time_best}
+  - name: top_speed_trap_kph
+    label: Top speed-trap reading (km/h)
+    type: simple
+    type_params: {measure: speed_trap_max}
+  # ---- pit stops ----
+  - name: pit_stops
+    label: Pit stops
+    type: simple
+    type_params: {measure: stop_count}
+  - name: avg_pit_lane_time_seconds
+    label: Average pit lane time (s)
+    description: "Pit entry to exit as reported by OpenF1; NOT stationary time."
+    type: simple
+    type_params: {measure: pit_lane_time_avg}
+  - name: avg_green_flag_time_lost_seconds
+    label: Average time lost per green-flag stop (s)
+    type: simple
+    type_params: {measure: time_lost_avg}
+    filter: "{{ Dimension('pit_stop__is_under_neutralisation') }} = false"
+  - name: slow_stop_rate
+    label: Share of stops flagged slow
+    type: ratio
+    type_params: {numerator: slow_stops_total, denominator: pit_stops}
+  - name: slow_stops_total
+    label: Slow stops
+    type: simple
+    type_params: {measure: slow_stops}
+  # ---- results ----
+  - name: championship_points
+    label: Points scored
+    type: simple
+    type_params: {measure: points}
+  - name: race_wins
+    label: Wins
+    type: simple
+    type_params: {measure: wins}
+  - name: podium_finishes
+    label: Podiums
+    type: simple
+    type_params: {measure: podiums}
+  - name: retirements
+    label: DNFs
+    type: simple
+    type_params: {measure: dnfs}
+  - name: race_starts
+    label: Classified entries
+    type: simple
+    type_params: {measure: starts}
+  - name: points_per_start
+    label: Points per start
+    type: ratio
+    type_params: {numerator: championship_points, denominator: race_starts}
+  - name: net_places_gained
+    label: Net places gained vs grid
+    type: simple
+    type_params: {measure: places_gained}
+  # ---- overtaking ----
+  - name: overtakes
+    label: Overtakes (all)
+    type: simple
+    type_params: {measure: overtake_events}
+  - name: on_track_overtakes
+    label: On-track overtakes (excl. probable pit-cycle)
+    type: simple
+    type_params: {measure: on_track_overtakes}
+  - name: drs_assisted_overtake_share
+    label: Share of overtakes made from DRS range
+    type: ratio
+    type_params: {numerator: drs_assisted_total, denominator: overtakes}
+  - name: drs_assisted_total
+    label: DRS-assisted overtakes
+    type: simple
+    type_params: {measure: drs_assisted_overtakes}

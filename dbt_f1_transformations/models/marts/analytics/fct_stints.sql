@@ -8,13 +8,14 @@ SELECT
     COUNT(*) AS stint_length_laps,
     MIN(tyre_age_this_lap) AS tyre_age_at_start,
     MAX(tyre_age_this_lap) AS tyre_age_at_end,
-    COUNT(*) FILTER (WHERE is_representative_lap) AS representative_laps,
-    AVG(lap_time_seconds) FILTER (WHERE is_representative_lap) AS avg_representative_lap_seconds,
-    MIN(lap_time_seconds) FILTER (WHERE is_representative_lap) AS best_representative_lap_seconds,
+    COUNT(CASE WHEN is_representative_lap THEN 1 END) AS representative_laps,
+    AVG(CASE WHEN is_representative_lap THEN lap_time_seconds END) AS avg_representative_lap_seconds,
+    MIN(CASE WHEN is_representative_lap THEN lap_time_seconds END) AS best_representative_lap_seconds,
     CASE
-        WHEN COUNT(*) FILTER (WHERE is_representative_lap) >= {{ var('min_stint_laps_for_degradation') }}
-        THEN REGR_SLOPE(COALESCE(fuel_corrected_lap_time_seconds, lap_time_seconds), tyre_age_this_lap)
-             FILTER (WHERE is_representative_lap)
+        WHEN COUNT(CASE WHEN is_representative_lap THEN 1 END) >= {{ var('min_stint_laps_for_degradation') }}
+        THEN {{ f1_regr_slope(
+                'CASE WHEN is_representative_lap THEN COALESCE(fuel_corrected_lap_time_seconds, lap_time_seconds) END',
+                "CASE WHEN is_representative_lap THEN " ~ f1_cast('tyre_age_this_lap', 'double') ~ " END") }}
     END AS degradation_seconds_per_lap
 FROM {{ ref('int_lap_context') }}
 WHERE stint_number IS NOT NULL

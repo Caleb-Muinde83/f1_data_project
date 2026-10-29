@@ -187,3 +187,63 @@ models:
 
   - name: fct_team_radio
     description: "Team radio recording metadata (no transcription)."
+
+  - name: fct_compound_pace_model
+    description: "Per driver per compound: fresh-tyre pace, degradation slope and r-squared from clean fuel-corrected laps. Input to the strategy simulator."
+    data_tests:
+      - unique_combination_of_columns: {arguments: {combination_of_columns: [session_key, driver_number, tyre_compound]}}
+
+  - name: fct_pit_loss_by_circuit
+    description: "Typical pit stop cost per circuit, split into green-flag and neutralised stops."
+    columns:
+      - name: circuit_key
+        data_tests: [unique, not_null]
+
+  - name: fct_undercut_overcut
+    description: "Pairs of related pit stops where the attacker ran directly behind the defender, with the outcome. See model header for limits."
+    data_tests:
+      - unique_combination_of_columns:
+          arguments: {combination_of_columns: [session_key, attacker_driver_number, attacker_stop_number, defender_driver_number, defender_stop_number]}
+    columns:
+      - name: strategy_type
+        data_tests:
+          - accepted_values: {arguments: {values: ['UNDERCUT', 'OVERCUT', 'SAME_LAP']}}
+
+  - name: fct_safety_car_events
+    description: "SC / VSC / red periods in Race sessions with the race laps they covered."
+    columns:
+      - name: track_status
+        data_tests:
+          - accepted_values: {arguments: {values: ['SC', 'VSC', 'RED']}}
+      - name: start_lap
+        data_tests: [not_null]
+
+  - name: fct_safety_car_hazard
+    description: "Empirical-Bayes probability of an SC/VSC start in the next N laps per circuit. Weak per-circuit evidence: check low_sample."
+    data_tests:
+      - unique_combination_of_columns: {arguments: {combination_of_columns: [circuit_key, track_status, laps_remaining]}}
+    columns:
+      - name: p_at_least_one_start
+        data_tests: [not_null]
+
+  - name: dim_session_corners
+    description: >
+      DERIVED corners (detected from reference-lap telemetry, not official turn numbers). One row per detected apex per session.
+    data_tests:
+      - unique_combination_of_columns: {arguments: {combination_of_columns: [session_key, corner_number]}}
+    columns:
+      - name: speed_class
+        data_tests:
+          - accepted_values: {arguments: {values: ['SLOW', 'MEDIUM', 'FAST']}}
+
+  - name: fct_corner_performance
+    description: "Entry/apex/exit speed, braking distance and throttle pick-up per driver per lap per detected corner."
+    data_tests:
+      - unique_combination_of_columns: {arguments: {combination_of_columns: [session_key, driver_number, lap_number, corner_number]}}
+
+  - name: fct_radio_messages
+    description: >
+      Transcribed team radio with race context and KEYWORD tags (heuristic, not NLP). Empty unless var enable_radio_transcripts is true.
+    columns:
+      - name: recording_url
+        data_tests: [unique]

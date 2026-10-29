@@ -3,13 +3,13 @@ WITH raw_pit AS (
 ),
 renamed_and_casted AS (
     SELECT
-        CAST(session_key AS INTEGER) AS session_key,
-        CAST(meeting_key AS INTEGER) AS meeting_key,
-        CAST(driver_number AS INTEGER) AS driver_number,
+        CAST(session_key AS {{ f1_type('int') }}) AS session_key,
+        CAST(meeting_key AS {{ f1_type('int') }}) AS meeting_key,
+        CAST(driver_number AS {{ f1_type('int') }}) AS driver_number,
 
-        CAST(lap_number AS INTEGER) AS lap_number,
-        CAST(date AS TIMESTAMP) AS pit_timestamp,
-        TRY_CAST(pit_duration AS DOUBLE) AS pit_duration
+        CAST(lap_number AS {{ f1_type('int') }}) AS lap_number,
+        CAST(date AS {{ f1_type('timestamp') }}) AS pit_timestamp,
+        {{ f1_try_cast_fn() }}(pit_duration AS {{ f1_type('double') }}) AS pit_duration
     FROM raw_pit
     WHERE driver_number IS NOT NULL
 )

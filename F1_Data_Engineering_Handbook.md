@@ -39,10 +39,10 @@ This book separates **what the build logs prove** from **what is only scaffolded
 | dbt + DuckDB: sources, 18 staging models, marts, tests | **[VERIFIED]** (a first clean run of 33 models, later 34 with `fct_tire_strategy`; all data tests passing at the last recorded run) |
 | Telemetry export to a partitioned Parquet lake | **[VERIFIED]** (a 43 minute export) |
 | Harlequin, DBeaver, Power BI over ODBC (16 tables) | **[VERIFIED]** |
-| dbt triggered from inside Airflow (`run_dbt_telemetry`) | **[VERIFIED]** |
+| dbt triggered from inside Airflow (`run_dbt_telemetry`) | **[CODE FINAL, RUN NOT CONFIRMED]** |
 | OpenTofu: `tofu init` and `tofu plan` for a GCS bucket | **[VERIFIED]** |
-| OpenTofu: `tofu apply`, BigQuery datasets | **[VERIFIED]** |
-| Cosmos DAG, `gcs_loader.py`, `deploy_to_composer.sh`, CI/CD workflow, Cloud Composer | **[VERIFIED]** |
+| OpenTofu: `tofu apply`, BigQuery datasets | **[SCAFFOLDED]** |
+| Cosmos DAG, `gcs_loader.py`, `deploy_to_composer.sh`, CI/CD workflow, Cloud Composer | **[SCAFFOLDED]** |
 
 > **Honest note on the title.** The warehouse that actually runs today is **local** (DuckDB). The cloud half of the architecture is designed and scaffolded, and Chapter 10 shows the one cloud step that was executed. Treat the cloud chapters as the **launch pad for your own migration**, not as a finished deployment.
 

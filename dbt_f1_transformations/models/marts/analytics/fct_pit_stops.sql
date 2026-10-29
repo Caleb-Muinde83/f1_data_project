@@ -30,7 +30,7 @@ SELECT
     in_lap_time_seconds + out_lap_time_seconds - 2 * reference_lap_seconds AS time_lost_seconds,
     position_before_stop - position_after_stop AS net_positions_gained,
     COALESCE(in_lap_track_status IN ('SC', 'VSC', 'RED'), FALSE) AS is_under_neutralisation,
-    MEDIAN(pit_lane_time_seconds) OVER (PARTITION BY session_key) AS session_median_pit_lane_time_seconds,
-    pit_lane_time_seconds > MEDIAN(pit_lane_time_seconds) OVER (PARTITION BY session_key) + {{ var('slow_stop_margin_seconds') }} AS is_slow_stop,
+    {{ f1_median_over('pit_lane_time_seconds', 'session_key') }} AS session_median_pit_lane_time_seconds,
+    pit_lane_time_seconds > {{ f1_median_over('pit_lane_time_seconds', 'session_key') }} + {{ var('slow_stop_margin_seconds') }} AS is_slow_stop,
     RANK() OVER (PARTITION BY session_key ORDER BY pit_lane_time_seconds) AS pit_lane_rank
 FROM stops

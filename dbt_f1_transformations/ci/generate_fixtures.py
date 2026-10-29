@@ -15,6 +15,8 @@ from datetime import datetime, timedelta, timezone
 import pyarrow as pa, pyarrow.parquet as pq
 
 OUT = sys.argv[1] if len(sys.argv) > 1 else "fixtures_raw"
+# Optional: FIXTURE_TELEMETRY_LAPS=3 limits car_data/location to the first N laps (a small set for slow engines/emulators)
+TEL_LAPS = int(os.environ.get("FIXTURE_TELEMETRY_LAPS", "0")) or None
 os.makedirs(OUT, exist_ok=True)
 random.seed(7)
 UTC = timezone.utc
@@ -32,6 +34,10 @@ SESSIONS = [  # key, meeting, type, name, start
     (9003, 1002, "Race", "Race", datetime(2024, 3, 9, 15, 0, tzinfo=UTC)),
 ]
 NLAPS, SC_LAPS = 12, (7, 8)
+# Pit laps in race sessions: 1 and 63 stop first (lap 4), 44 stops lap 5 with a quicker stop, 11 stays out until lap 9.
+# This yields an undercut (63 on 44), an overcut (11 on 1) and a slower-stop case.
+PIT_LAPS = {1: 4, 63: 4, 44: 5, 11: 9}
+OUTLAP_EXTRA = {44: 15}
 meetings = [{"meeting_key": m, "year": 2024, "circuit_key": 10 + m % 10, "meeting_name": f"GP {m}", "meeting_official_name": f"Official GP {m}",
              "location": f"City {m}", "country_key": 1, "country_code": "XXX", "circuit_short_name": f"Circuit{m}",
              "date_start": iso(datetime(2024, 3, 1 + 8 * (m - 1001), 11, tzinfo=UTC)), "gmt_offset": "00:00:00"} for m in (1001, 1002)]
@@ -51,19 +57,19 @@ def build_session(key, mk, stype, start):
     base = {n: 90.0 + i * 0.35 for i, n in enumerate(DRIVERS)}
     laps, cum, starts, pits, stints = [], {n: 0.0 for n in DRIVERS}, {}, [], []
     for n in DRIVERS:
-        pit_lap = 5 if n == 44 and is_race else None
-        stints += ([{"session_key": key, "meeting_key": mk, "driver_number": n, "stint_number": 1, "compound": "MEDIUM", "tyre_age_at_start": 0, "lap_start": 1, "lap_end": 5},
-                    {"session_key": key, "meeting_key": mk, "driver_number": n, "stint_number": 2, "compound": "HARD", "tyre_age_at_start": 0, "lap_start": 6, "lap_end": NLAPS}]
+        pit_lap = PIT_LAPS.get(n) if is_race else None
+        stints += ([{"session_key": key, "meeting_key": mk, "driver_number": n, "stint_number": 1, "compound": "MEDIUM", "tyre_age_at_start": 0, "lap_start": 1, "lap_end": pit_lap},
+                    {"session_key": key, "meeting_key": mk, "driver_number": n, "stint_number": 2, "compound": "HARD", "tyre_age_at_start": 0, "lap_start": pit_lap + 1, "lap_end": NLAPS}]
                    if pit_lap else [{"session_key": key, "meeting_key": mk, "driver_number": n, "stint_number": 1, "compound": "MEDIUM", "tyre_age_at_start": 1, "lap_start": 1, "lap_end": NLAPS}])
         age0 = 0
         for lap in range(1, NLAPS + 1):
-            if pit_lap and lap == 6: age0 = 6
+            if pit_lap and lap == pit_lap + 1: age0 = pit_lap + 1
             age = lap - age0
             d = base[n] + 0.06 * age - 0.035 * lap + random.uniform(-0.15, 0.15)
             if lap == 1: d += 6
             if lap in SC_LAPS: d += 32
             if pit_lap and lap == pit_lap: d += 5
-            if pit_lap and lap == pit_lap + 1: d += 19
+            if pit_lap and lap == pit_lap + 1: d += OUTLAP_EXTRA.get(n, 19)
             s1, s2 = d * 0.30, d * 0.36
             ds = start + timedelta(seconds=120 + cum[n])
             laps.append({"session_key": key, "meeting_key": mk, "driver_number": n, "lap_number": lap, "date_start": iso(ds), "lap_duration": round(d, 3),
@@ -141,7 +147,7 @@ for key, mk, stype, sname, start in SESSIONS:
     # high-frequency telemetry for two drivers (4 Hz); location is offset by 70 ms
     car, loc = [], []
     for n in (1, 44):
-        for l in (x for x in laps if x["driver_number"] == n):
+        for l in (x for x in laps if x["driver_number"] == n and (TEL_LAPS is None or x["lap_number"] <= TEL_LAPS)):
             t0 = datetime.fromisoformat(l["date_start"]); steps = int(l["lap_duration"] * 4)
             for k in range(steps):
                 ph = k / steps; spd = int(200 + 110 * math.sin(2 * math.pi * ph * 3))
@@ -151,4 +157,13 @@ for key, mk, stype, sname, start in SESSIONS:
                 loc.append({"session_key": key, "meeting_key": mk, "driver_number": n, "date": iso(t0 + timedelta(seconds=k * 0.25 + 0.07)),
                             "x": 1000.0 * math.cos(2 * math.pi * ph), "y": 600.0 * math.sin(2 * math.pi * ph), "z": 10.0})
     save("car_data", key, car); save("location", key, loc)
+# radio transcripts (shape written by airflow/dags/modules/radio_transcriber.py); prefix differs from team_radio_* on purpose
+for key, mk, stype, sname, start in SESSIONS:
+    if stype != "Race": continue
+    msgs = [(44, 200, "Box box box, we are switching to hard tyres"), (1, 420, "My tyres are gone, graining on the front left"),
+            (63, 700, "Safety car safety car, stay out, stay out"), (11, 800, "DRS is not working in the fast sections"),
+            (11, 900, "Copy, five second penalty, stewards are investigating"), (1, 950, "")]
+    save("radio_transcripts", key, [{"session_key": key, "meeting_key": mk, "driver_number": n, "date": iso(start + timedelta(seconds=120 + sec)),
+        "recording_url": f"http://x/{key}/{i}.mp3", "transcript": txt, "language": "en", "audio_duration_seconds": 4.2, "model": "small.en",
+        "error": None, "_transcribed_at_utc": "2026-01-01T00:00:00+00:00"} for i, (n, sec, txt) in enumerate(msgs)])
 print("fixtures written to", OUT)

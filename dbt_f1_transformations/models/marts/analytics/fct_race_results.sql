@@ -8,7 +8,7 @@ grid AS (
     SELECT * FROM {{ ref('stg_starting_grid') }}
 ),
 sessions AS (
-    SELECT session_key, session_type, year FROM {{ ref('stg_sessions') }}
+    SELECT session_key, session_type, year, date_start AS session_start_time FROM {{ ref('stg_sessions') }}
 ),
 fastest AS (
     SELECT session_key, driver_number FROM {{ ref('fct_fastest_laps') }} WHERE is_overall_fastest_lap
@@ -16,7 +16,7 @@ fastest AS (
 calc AS (
     SELECT
         r.session_key, r.meeting_key, r.driver_number,
-        s.session_type, s.year,
+        s.session_type, s.year, s.session_start_time,
         g.grid_position,
         r.position AS final_position,
         CASE WHEN g.grid_position IS NOT NULL AND r.position IS NOT NULL THEN g.grid_position - r.position END AS positions_gained_or_lost,

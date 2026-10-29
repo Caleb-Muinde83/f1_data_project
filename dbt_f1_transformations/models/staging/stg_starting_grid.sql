@@ -3,12 +3,12 @@ WITH raw_starting_grid AS (
 ),
 renamed_and_casted AS (
     SELECT
-        CAST(session_key AS INTEGER) AS session_key,
-        CAST(meeting_key AS INTEGER) AS meeting_key,
-        CAST(driver_number AS INTEGER) AS driver_number,
+        CAST(session_key AS {{ f1_type('int') }}) AS session_key,
+        CAST(meeting_key AS {{ f1_type('int') }}) AS meeting_key,
+        CAST(driver_number AS {{ f1_type('int') }}) AS driver_number,
         
         -- Changed from grid_position to position based on likely API schema
-        CAST(position AS INTEGER) AS grid_position
+        CAST(position AS {{ f1_type('int') }}) AS grid_position
         
     FROM raw_starting_grid
     WHERE driver_number IS NOT NULL

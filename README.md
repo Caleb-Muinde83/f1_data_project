@@ -713,18 +713,20 @@ docker compose up -d
 
 ---
 
-## What changed in this version (analytics, data quality, pipeline)
+## What changed in this version
 
-See **docs/ANALYTICS_GUIDE.md** for the model catalogue, the assumptions behind each number, what is still not built, and a first-run checklist for real data. Example analyst queries are in **docs/example_queries.sql**.
-
-Quick start for the new test harness (no API calls, no Docker):
+See **docs/ANALYTICS_GUIDE.md** (models, assumptions, verification status, what is still not done) and **docs/CHANGES.md** (file list). Example analyst queries: **docs/example_queries.sql**.
 
 ```bash
-make ci-test        # synthetic OpenF1 data -> Python unit tests + full dbt build and tests
+make ci-test            # synthetic data -> Python tests + 123 dbt nodes (models, seed, tests) + dashboard tests (no API, no Docker)
+make dashboard          # Streamlit dashboards over your warehouse (F1_DUCKDB_PATH)
+make strategy SESSION=9158          # Monte Carlo strategy ranking
+make semantic-validate  # MetricFlow semantic layer (pip install dbt-metricflow)
+make bq-emulator-test   # same project on BigQuery (emulator) compared table-by-table with DuckDB
 ```
 
-* **Secrets are no longer in the compose file.** Copy `airflow/.env.example` to `airflow/.env` and set the passwords/keys before `docker compose up`.
-* **The Airflow image is now `apache/airflow:2.8.1-python3.11`** (the plain 2.8.1 tag is Python 3.8, which current dbt-duckdb does not support).
-* **Paths are parameterised**: `F1_RAW_DATA_PATH`, `F1_DUCKDB_PATH`, `F1_EXPORT_PATH`; the old hard-coded `F:/...` values remain as the defaults for the `dev` target.
-* `dbt build --profiles-dir . --target dev|container|ci` (see `dbt_f1_transformations/profiles.yml`).
-* **Not exercised in this repo's tests:** the Docker containers, dbt-inside-Airflow, the GCS loader against real GCS, the Composer deploy script and workflow, the Cosmos DAG, and the OpenTofu BigQuery datasets.
+* **Secrets are no longer in the compose file.** Copy `airflow/.env.example` to `airflow/.env` first.
+* **The Airflow image is now `apache/airflow:2.8.1-python3.11`** (the plain tag is Python 3.8, which current dbt-duckdb does not support).
+* **Paths are parameterised** (`F1_RAW_DATA_PATH`, `F1_DUCKDB_PATH`, `F1_EXPORT_PATH`); the old `F:/...` values remain the defaults for the `dev` target.
+* `dbt build --profiles-dir . --target dev|container|ci|bigquery` (see `dbt_f1_transformations/profiles.yml`).
+* **Not verified**: Docker containers, dbt-inside-Airflow, real BigQuery/GCS/Composer, OpenTofu changes, real speech-to-text, and everything on your real data. The guide has the full table.

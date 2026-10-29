@@ -1,0 +1,9 @@
+version: 2
+
+seeds:
+  - name: f1_points_system
+    description: "Current Race and Sprint points scales (historical systems are not modelled)."
+    config:
+      column_types:
+        position: "{{ 'int64' if target.type == 'bigquery' else 'integer' }}"
+        points: "{{ 'float64' if target.type == 'bigquery' else 'double' }}"

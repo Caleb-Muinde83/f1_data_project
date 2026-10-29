@@ -1,0 +1,110 @@
+version: 2
+
+# Governed business definitions. Query with MetricFlow, e.g.:
+#   mf query --metrics avg_representative_lap_time_seconds --group-by driver__full_name,lap__tyre_compound
+# Joins use shared entities: every fact carries `session` and `driver` foreign entities that resolve to the dimension models.
+
+semantic_models:
+  - name: sessions
+    description: "One row per session (practice, qualifying, sprint, race) with its meeting and circuit."
+    model: ref('dim_sessions')
+    defaults: {agg_time_dimension: session_start_time}
+    entities:
+      - {name: session, type: primary, expr: session_key}
+    dimensions:
+      - {name: session_start_time, type: time, type_params: {time_granularity: day}}
+      - {name: session_type, type: categorical}
+      - {name: session_name, type: categorical}
+      - {name: season, type: categorical, expr: year}
+      - {name: location, type: categorical}
+      - {name: circuit_short_name, type: categorical}
+      - {name: country_code, type: categorical}
+    measures:
+      - {name: session_count, expr: "1", agg: sum}
+
+  - name: drivers
+    description: "Latest known identity and team per driver number (use dim_driver_session for team at a point in time)."
+    model: ref('dim_drivers')
+    entities:
+      - {name: driver, type: primary, expr: driver_number}
+    dimensions:
+      - {name: full_name, type: categorical}
+      - {name: driver_acronym, type: categorical}
+      - {name: team_name, type: categorical}
+
+  - name: laps
+    description: "One row per driver per lap with tyre, track status and pace flags."
+    model: ref('fct_lap_performance')
+    defaults: {agg_time_dimension: lap_start_ts}
+    entities:
+      - {name: lap, type: primary, expr: "CONCAT(CAST(session_key AS VARCHAR), '-', CAST(driver_number AS VARCHAR), '-', CAST(lap_number AS VARCHAR))"}
+      - {name: session, type: foreign, expr: session_key}
+      - {name: driver, type: foreign, expr: driver_number}
+    dimensions:
+      - {name: lap_start_ts, type: time, type_params: {time_granularity: day}}
+      - {name: tyre_compound, type: categorical}
+      - {name: track_status, type: categorical}
+      - {name: is_representative_lap, type: categorical}
+      - {name: stint_number, type: categorical}
+    measures:
+      - {name: lap_count, expr: "1", agg: sum}
+      - {name: lap_time_sum, expr: lap_time_seconds, agg: sum}
+      - {name: lap_time_avg, expr: lap_time_seconds, agg: average}
+      - {name: lap_time_best, expr: lap_time_seconds, agg: min}
+      - {name: fuel_corrected_lap_time_avg, expr: fuel_corrected_lap_time_seconds, agg: average}
+      - {name: speed_trap_max, expr: speed_trap_finish, agg: max}
+
+  - name: pit_stops
+    description: "One row per pit stop."
+    model: ref('fct_pit_stops')
+    defaults: {agg_time_dimension: pit_timestamp}
+    entities:
+      - {name: pit_stop, type: primary, expr: "CONCAT(CAST(session_key AS VARCHAR), '-', CAST(driver_number AS VARCHAR), '-', CAST(stop_number AS VARCHAR))"}
+      - {name: session, type: foreign, expr: session_key}
+      - {name: driver, type: foreign, expr: driver_number}
+    dimensions:
+      - {name: pit_timestamp, type: time, type_params: {time_granularity: day}}
+      - {name: compound_after, type: categorical}
+      - {name: is_under_neutralisation, type: categorical}
+    measures:
+      - {name: stop_count, expr: "1", agg: sum}
+      - {name: pit_lane_time_avg, expr: pit_lane_time_seconds, agg: average}
+      - {name: time_lost_avg, expr: time_lost_seconds, agg: average}
+      - {name: slow_stops, expr: "CASE WHEN is_slow_stop THEN 1 ELSE 0 END", agg: sum}
+
+  - name: race_results
+    description: "One row per driver per classified session."
+    model: ref('fct_race_results')
+    defaults: {agg_time_dimension: session_start_time}
+    entities:
+      - {name: result, type: primary, expr: "CONCAT(CAST(session_key AS VARCHAR), '-', CAST(driver_number AS VARCHAR))"}
+      - {name: session, type: foreign, expr: session_key}
+      - {name: driver, type: foreign, expr: driver_number}
+    dimensions:
+      - {name: session_start_time, type: time, type_params: {time_granularity: day}}
+      - {name: result_session_type, type: categorical, expr: session_type}
+      - {name: classification_status, type: categorical}
+    measures:
+      - {name: points, expr: total_points, agg: sum}
+      - {name: wins, expr: "CASE WHEN is_winner THEN 1 ELSE 0 END", agg: sum}
+      - {name: podiums, expr: "CASE WHEN is_podium THEN 1 ELSE 0 END", agg: sum}
+      - {name: dnfs, expr: "CASE WHEN classification_status = 'DNF' THEN 1 ELSE 0 END", agg: sum}
+      - {name: starts, expr: "1", agg: sum}
+      - {name: places_gained, expr: positions_gained_or_lost, agg: sum}
+
+  - name: overtakes
+    description: "One row per overtake event."
+    model: ref('fct_overtakes')
+    defaults: {agg_time_dimension: overtake_timestamp}
+    entities:
+      - {name: overtake, type: primary, expr: "CONCAT(CAST(session_key AS VARCHAR), '-', CAST(overtaking_driver_number AS VARCHAR), '-', CAST(overtaken_driver_number AS VARCHAR), '-', CAST(overtake_timestamp AS VARCHAR))"}
+      - {name: session, type: foreign, expr: session_key}
+      - {name: driver, type: foreign, expr: overtaking_driver_number}
+    dimensions:
+      - {name: overtake_timestamp, type: time, type_params: {time_granularity: day}}
+      - {name: is_probable_pit_cycle_pass, type: categorical}
+      - {name: overtake_track_status, type: categorical, expr: track_status}
+    measures:
+      - {name: overtake_events, expr: "1", agg: sum}
+      - {name: on_track_overtakes, expr: "CASE WHEN NOT is_probable_pit_cycle_pass THEN 1 ELSE 0 END", agg: sum}
+      - {name: drs_assisted_overtakes, expr: "CASE WHEN was_in_drs_range_before_pass THEN 1 ELSE 0 END", agg: sum}

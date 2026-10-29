@@ -2,14 +2,14 @@
   One row per driver per lap, enriched with everything a race engineer needs on one line:
   stint/tyre, pit flags, track status, weather at lap start, position and gaps at lap start/end,
   and pace-normalisation flags (representative lap, fuel-corrected time, deltas).
-  Every time-based alignment uses an ASOF join: "the latest reading at or before this moment".
+  Every time-based alignment uses an ASOF join (via the portable f1_asof_join macro): "the latest reading at or before this moment".
 #}
 WITH laps AS (
     SELECT
         l.*,
         COALESCE(
             LEAD(l.date_start) OVER (PARTITION BY l.session_key, l.driver_number ORDER BY l.lap_number),
-            l.date_start + l.lap_duration * INTERVAL 1 SECOND
+            {{ f1_ts_add_seconds('l.date_start', 'l.lap_duration') }}
         ) AS lap_end_ts,
         MAX(l.lap_number) OVER (PARTITION BY l.session_key) AS session_lap_count
     FROM {{ ref('stg_laps') }} l
@@ -81,6 +81,31 @@ lap_yellow AS (
     WHERE upper(rc.flag) IN ('YELLOW', 'DOUBLE YELLOW')
 ),
 
+spine AS (
+    SELECT session_key, driver_number, lap_number, date_start AS lap_start_ts, lap_end_ts FROM with_out_lap
+),
+
+weather_at_start AS (
+    {{ f1_asof_join(left='spine', right=ref('stg_weather'), on=['session_key'], left_ts='lap_start_ts', right_ts='weather_timestamp',
+        left_cols=['session_key', 'driver_number', 'lap_number', 'lap_start_ts'],
+        right_cols=['weather_timestamp', 'air_temperature', 'track_temperature', 'humidity', 'wind_speed', 'rainfall_flag']) }}
+),
+
+position_at_start AS (
+    {{ f1_asof_join(left='spine', right=ref('stg_position'), on=['session_key', 'driver_number'], left_ts='lap_start_ts', right_ts='position_timestamp',
+        left_cols=['session_key', 'driver_number', 'lap_number', 'lap_start_ts'], right_cols=['position AS position_start']) }}
+),
+
+position_at_end AS (
+    {{ f1_asof_join(left='spine', right=ref('stg_position'), on=['session_key', 'driver_number'], left_ts='lap_end_ts', right_ts='position_timestamp',
+        left_cols=['session_key', 'driver_number', 'lap_number', 'lap_end_ts'], right_cols=['position AS position_end']) }}
+),
+
+gaps_at_end AS (
+    {{ f1_asof_join(left='spine', right=ref('stg_intervals'), on=['session_key', 'driver_number'], left_ts='lap_end_ts', right_ts='interval_timestamp',
+        left_cols=['session_key', 'driver_number', 'lap_number', 'lap_end_ts'], right_cols=['gap_to_leader_raw', 'interval_raw']) }}
+),
+
 enriched AS (
     SELECT
         l.*,
@@ -92,24 +117,24 @@ enriched AS (
         w.humidity,
         w.wind_speed,
         w.rainfall_flag,
-        pos_s.position AS position_start,
-        pos_e.position AS position_end,
-        TRY_CAST(iv.gap_to_leader_raw AS DOUBLE) AS gap_to_leader_end_seconds,
-        TRY_CAST(iv.interval_raw AS DOUBLE) AS gap_to_car_ahead_end_seconds,
-        COALESCE(iv.gap_to_leader_raw LIKE '+%LAP%', FALSE) AS is_lapped_at_lap_end
+        ps.position_start,
+        pe.position_end,
+        {{ f1_try_cast_fn() }}(g.gap_to_leader_raw AS {{ f1_type('double') }}) AS gap_to_leader_end_seconds,
+        {{ f1_try_cast_fn() }}(g.interval_raw AS {{ f1_type('double') }}) AS gap_to_car_ahead_end_seconds,
+        COALESCE(g.gap_to_leader_raw LIKE '+%LAP%', FALSE) AS is_lapped_at_lap_end
     FROM with_out_lap l
     LEFT JOIN lap_track_status ts
         ON l.session_key = ts.session_key AND l.driver_number = ts.driver_number AND l.lap_number = ts.lap_number
     LEFT JOIN lap_yellow y
         ON l.session_key = y.session_key AND l.driver_number = y.driver_number AND l.lap_number = y.lap_number
-    ASOF LEFT JOIN {{ ref('stg_weather') }} w
-        ON l.session_key = w.session_key AND l.date_start >= w.weather_timestamp
-    ASOF LEFT JOIN {{ ref('stg_position') }} pos_s
-        ON l.session_key = pos_s.session_key AND l.driver_number = pos_s.driver_number AND l.date_start >= pos_s.position_timestamp
-    ASOF LEFT JOIN {{ ref('stg_position') }} pos_e
-        ON l.session_key = pos_e.session_key AND l.driver_number = pos_e.driver_number AND l.lap_end_ts >= pos_e.position_timestamp
-    ASOF LEFT JOIN {{ ref('stg_intervals') }} iv
-        ON l.session_key = iv.session_key AND l.driver_number = iv.driver_number AND l.lap_end_ts >= iv.interval_timestamp
+    LEFT JOIN weather_at_start w
+        ON l.session_key = w.session_key AND l.driver_number = w.driver_number AND l.lap_number = w.lap_number
+    LEFT JOIN position_at_start ps
+        ON l.session_key = ps.session_key AND l.driver_number = ps.driver_number AND l.lap_number = ps.lap_number
+    LEFT JOIN position_at_end pe
+        ON l.session_key = pe.session_key AND l.driver_number = pe.driver_number AND l.lap_number = pe.lap_number
+    LEFT JOIN gaps_at_end g
+        ON l.session_key = g.session_key AND l.driver_number = g.driver_number AND l.lap_number = g.lap_number
 ),
 
 flagged AS (
@@ -127,8 +152,7 @@ flagged AS (
 with_medians AS (
     SELECT
         *,
-        MEDIAN(CASE WHEN is_clean_candidate THEN lap_duration END)
-            OVER (PARTITION BY session_key, driver_number) AS driver_median_clean_lap_seconds
+        {{ f1_median_over('CASE WHEN is_clean_candidate THEN lap_duration END', 'session_key, driver_number') }} AS driver_median_clean_lap_seconds
     FROM flagged
 )
 
