@@ -72,6 +72,10 @@ with DAG(
             default=False, type="boolean",
             description="Run `dbt build` after extraction (needs dbt + the dbt project mounted in the container).",
         ),
+        "transcribe_radio": Param(
+            default=False, type="boolean",
+            description="Transcribe team radio audio with faster-whisper (needs the package + outbound HTTPS; slow on CPU).",
+        ),
         "upload_to_gcs": Param(
             default=False, type="boolean",
             description="Upload extracted Parquet to GCS_RAW_BUCKET after extraction.",
@@ -250,6 +254,18 @@ with DAG(
             raise AirflowFailException(f"dbt build failed with exit code {result.returncode}. See the task log above.")
         return "dbt build succeeded"
 
+    # ==========================================
+    # OPTIONAL: TRANSCRIBE TEAM RADIO (one session at a time: CPU heavy)
+    # ==========================================
+    @task(max_active_tis_per_dag=1)
+    def transcribe_team_radio(target_session, **context):
+        if not context["params"]["transcribe_radio"]:
+            raise AirflowSkipException("transcribe_radio is off for this run.")
+        from modules.radio_transcriber import transcribe_session
+        return transcribe_session(target_session, RAW_DIR, model_name=os.environ.get("RADIO_WHISPER_MODEL", "small.en"))
+
+    radio_task = transcribe_team_radio.expand(target_session=all_sessions)
+
     upload_task = upload_raw_to_gcs(load_task)
     dbt_task = run_dbt_build(load_task)
 
@@ -261,3 +277,4 @@ with DAG(
     all_sessions >> telemetry_group
     [all_sessions, race_sessions, quali_race_sessions] >> results_group
     [event_group, telemetry_group, results_group] >> load_task
+    results_group >> radio_task

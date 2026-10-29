@@ -11,9 +11,11 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
-      - run: pip install dbt-duckdb pyarrow pytest
-      - name: Python unit tests (extractor, manifest, GCS loader)
+      - run: pip install dbt-duckdb pyarrow pytest numpy duckdb streamlit plotly
+      - name: Python unit tests (extractor, manifest, GCS loader, radio, BigQuery loader)
         run: python -m pytest -q airflow/tests
+      - name: Strategy simulator tests
+        run: python -m pytest -q analytics/tests
       - name: Compile DAG and plugin code
         run: python -m compileall -q airflow/dags airflow/plugins
       - name: Build a synthetic OpenF1 dataset
@@ -26,4 +28,31 @@ jobs:
         env:
           F1_RAW_DATA_PATH: ${{ runner.temp }}/f1_raw
           F1_DUCKDB_PATH: ${{ runner.temp }}/f1_ci.duckdb
-        run: dbt build --profiles-dir . --target ci
+        run: |
+          dbt seed --profiles-dir . --target ci
+          dbt build --profiles-dir . --target ci --vars '{enable_radio_transcripts: true, min_stint_laps_for_degradation: 3}'
+      - name: Dashboard tests (every page renders against the built warehouse)
+        env:
+          F1_DUCKDB_PATH: ${{ runner.temp }}/f1_ci.duckdb
+        run: python -m pytest -q dashboards/tests
+
+  # Same project built on BigQuery (emulator) and compared table-by-table with DuckDB. Not yet run on GitHub Actions
+  # (only locally), so it is advisory until it has proven stable there.
+  bigquery-emulator:
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - run: pip install dbt-duckdb dbt-bigquery google-cloud-bigquery pyarrow duckdb
+      - name: Install the BigQuery emulator
+        run: |
+          curl -sL -o emu.deb https://github.com/goccy/bigquery-emulator/releases/download/v0.8.1/bigquery-emulator_0.8.1-1_amd64.deb
+          sudo dpkg -i emu.deb
+      - name: Build on BigQuery and compare with DuckDB
+        env:
+          BQ_EMULATOR_BIN: /usr/bin/bigquery-emulator
+          BQ_PYTHON: python
+        run: bash dbt_f1_transformations/ci/bigquery_emulator/run_tests.sh

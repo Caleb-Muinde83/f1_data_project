@@ -12,13 +12,13 @@ SELECT
     MAX(speed) AS top_speed_kph,
     MIN(speed) AS min_speed_kph,
     AVG(speed) AS avg_speed_kph,
-    AVG((throttle >= 99)::INTEGER) AS full_throttle_fraction,
-    AVG((brake > 0)::INTEGER) AS braking_fraction,
+    AVG({{ f1_cast('(throttle >= 99)', 'int') }}) AS full_throttle_fraction,
+    AVG({{ f1_cast('(brake > 0)', 'int') }}) AS braking_fraction,
     -- a braking zone starts when brake goes from released (0) to applied (>0)
-    COUNT(*) FILTER (WHERE brake > 0 AND COALESCE(prev_brake, 0) = 0) AS braking_zone_count,
-    AVG((drs IN (10, 12, 14))::INTEGER) AS drs_open_fraction,
+    COUNT(CASE WHEN brake > 0 AND COALESCE(prev_brake, 0) = 0 THEN 1 END) AS braking_zone_count,
+    AVG({{ f1_cast('(drs IN (10, 12, 14))', 'int') }}) AS drs_open_fraction,
     MAX(gear) AS max_gear,
-    AVG((gear <= 3)::INTEGER) AS low_gear_fraction,
-    AVG((gear >= 7)::INTEGER) AS high_gear_fraction
+    AVG({{ f1_cast('(gear <= 3)', 'int') }}) AS low_gear_fraction,
+    AVG({{ f1_cast('(gear >= 7)', 'int') }}) AS high_gear_fraction
 FROM samples
 GROUP BY session_key, meeting_key, driver_number, lap_number

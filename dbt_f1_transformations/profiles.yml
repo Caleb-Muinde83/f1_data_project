@@ -2,6 +2,8 @@
 #   dbt build --profiles-dir . --target dev        (host)
 #   dbt build --profiles-dir . --target container  (inside the Airflow container)
 #   dbt build --profiles-dir . --target ci         (GitHub Actions, synthetic fixtures)
+#   dbt build --profiles-dir . --target bigquery   (cloud warehouse; needs `gcloud auth application-default login`)
+#   dbt build --profiles-dir . --target bigquery_emulator   (local BigQuery emulator; see ci/bq_emulator_runner.py)
 dbt_f1_transformations:
   target: dev
   outputs:
@@ -21,3 +23,18 @@ dbt_f1_transformations:
       type: duckdb
       path: "{{ env_var('F1_DUCKDB_PATH', '/tmp/f1_ci.duckdb') }}"
       threads: 2
+    bigquery:
+      type: bigquery
+      method: oauth                       # application-default credentials (gcloud auth application-default login)
+      project: "{{ env_var('F1_BQ_PROJECT') }}"
+      dataset: "{{ env_var('F1_BQ_DATASET', 'f1_analytics') }}"   # where dbt builds staging, intermediate and marts
+      location: "{{ env_var('F1_BQ_LOCATION', 'US') }}"
+      threads: 4
+    bigquery_emulator:
+      type: bigquery
+      method: oauth
+      project: "{{ env_var('F1_BQ_PROJECT', 'f1test') }}"
+      dataset: "{{ env_var('F1_BQ_DATASET', 'f1_analytics') }}"
+      location: US
+      api_endpoint: "{{ env_var('F1_BQ_API_ENDPOINT', 'http://localhost:9050') }}"
+      threads: 1

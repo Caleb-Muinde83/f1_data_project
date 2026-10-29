@@ -8,7 +8,7 @@ SELECT
     MIN(year) AS first_year,
     MAX(year) AS last_year,
     COUNT(*) AS sessions_held,
-    COUNT(*) FILTER (WHERE session_type = 'Race') AS races_held
+    COUNT(CASE WHEN session_type = 'Race' THEN 1 END) AS races_held
 FROM {{ ref('dim_sessions') }}
 WHERE circuit_key IS NOT NULL
 GROUP BY circuit_key

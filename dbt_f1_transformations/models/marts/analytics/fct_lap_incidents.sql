@@ -18,10 +18,10 @@ WITH events AS (
 per_lap AS (
     SELECT
         session_key, driver_number, lap_number,
-        STRING_AGG(DISTINCT category, ', ') AS incident_categories,
+        STRING_AGG(DISTINCT category, ', ' ORDER BY category) AS incident_categories,
         COUNT(*) AS race_control_message_count,
         MIN(flag_rank) AS worst_flag_rank,
-        BOOL_OR(upper(message) LIKE '%PENALTY%') AS has_penalty_message
+        {{ f1_bool_or("upper(message) LIKE '%PENALTY%'") }} AS has_penalty_message
     FROM events
     GROUP BY 1, 2, 3
 )

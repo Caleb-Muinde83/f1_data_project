@@ -5,16 +5,16 @@ WITH msgs AS (
 )
 SELECT
     session_key, meeting_key,
-    COALESCE(driver_number, TRY_CAST(regexp_extract(message, 'CAR (\d+)', 1) AS INTEGER)) AS driver_number,
+    COALESCE(driver_number, {{ f1_try_cast_fn() }}({{ f1_regexp_extract('message', 'CAR (\d+)') }} AS {{ f1_type('int') }})) AS driver_number,
     race_control_timestamp AS penalty_timestamp,
     lap_number,
-    TRY_CAST(NULLIF(regexp_extract(message, '(\d+) SECOND', 1), '') AS INTEGER) AS penalty_seconds,
+    {{ f1_try_cast_fn() }}({{ f1_regexp_extract('message', '(\d+) SECOND') }} AS {{ f1_type('int') }}) AS penalty_seconds,
     CASE
         WHEN upper(message) LIKE '%DRIVE THROUGH%' THEN 'DRIVE THROUGH'
         WHEN upper(message) LIKE '%STOP/GO%' OR upper(message) LIKE '%STOP AND GO%' THEN 'STOP/GO'
         WHEN upper(message) LIKE '%SECOND%' THEN 'TIME PENALTY'
         ELSE 'OTHER'
     END AS penalty_type,
-    NULLIF(regexp_extract(message, ' - (.*)$', 1), '') AS reason,
+    {{ f1_regexp_extract('message', ' - (.*)$') }} AS reason,
     message
 FROM msgs

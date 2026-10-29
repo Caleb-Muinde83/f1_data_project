@@ -28,9 +28,32 @@ vars:
   min_stint_laps_for_degradation: 5 # regression needs at least this many representative laps
   distance_bin_metres: 10           # resolution of the distance-domain telemetry trace
   fastest_lap_bonus_last_year: 2024 # the bonus point was removed from the 2025 season
+  # --- derived corner detection (no official corner data exists in OpenF1) ---
+  corner_smooth_bins: 2              # speed smoothing half-window (bins)
+  corner_min_separation_bins: 15     # two apexes closer than this many bins collapse to the lowest one
+  corner_prominence_window_bins: 50  # window used to measure how far speed drops into a corner
+  corner_min_speed_drop_kph: 25      # a corner = speed minimum at least this far below the surrounding peak
+  corner_entry_distance_m: 150
+  corner_exit_distance_m: 100
+  corner_brake_lookback_m: 100       # how far before entry a brake application still belongs to this corner
+  corner_slow_kph: 120               # apex speed classes
+  corner_fast_kph: 220
+  # --- undercut / overcut ---
+  undercut_window_laps: 8            # two stops within this many laps are considered related
+  undercut_max_gap_seconds: 8.0      # attacker must be within this gap of the defender before the first stop
+  # --- safety car model ---
+  sc_prior_laps: 300                 # strength of the pull toward the all-circuit rate (empirical Bayes)
   # Where the telemetry export writes partitioned Parquet (relative to the dbt process, or absolute)
   telemetry_export_path: "{{ env_var('F1_EXPORT_PATH', 'output/telemetry_data') }}"
+  # BigQuery only: telemetry tables are partitioned with EXACTLY ONE session per partition so insert_overwrite can only
+  # ever replace the session being loaded. Sessions outside [start, end) land in a catch-all partition: widen the range
+  # (max 4000 partitions) before the season counter outgrows it.
+  bq_session_key_start: 9000
+  bq_session_key_end: 13000
+  bq_incremental_strategy: insert_overwrite   # use 'merge' where scripting (insert_overwrite) is unavailable
   export_data: false
+  # Build the radio transcript models. Leave false until radio_transcripts_*_extracted.parquet files exist.
+  enable_radio_transcripts: false
 
 models:
   dbt_f1_transformations:
@@ -40,9 +63,3 @@ models:
       +materialized: table
     marts:
       +materialized: table
-
-seeds:
-  dbt_f1_transformations:
-    +column_types:
-      position: integer
-      points: double

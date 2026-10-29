@@ -6,7 +6,14 @@
   * INCREMENTAL by session: a session already present is skipped. To re-load a session whose raw files were
     re-extracted:  dbt run-operation delete_sessions_from_incrementals --args '{sessions: [9158]}'  then dbt run.
 #}
-{{ config(materialized='incremental', incremental_strategy='append') }}
+{{ config(
+    materialized='incremental',
+    incremental_strategy=var('bq_incremental_strategy', 'insert_overwrite') if target.type == 'bigquery' else 'append',
+    unique_key=['session_key', 'driver_number', 'telemetry_timestamp'] if (target.type == 'bigquery' and var('bq_incremental_strategy', 'insert_overwrite') == 'merge') else none,
+    partition_by=({'field': 'session_key', 'data_type': 'int64',
+                   'range': {'start': var('bq_session_key_start'), 'end': var('bq_session_key_end'), 'interval': 1}}
+                  if target.type == 'bigquery' else none)
+) }}
 
 WITH car_data AS (
     SELECT * FROM {{ ref('stg_car_data') }}
@@ -14,22 +21,23 @@ WITH car_data AS (
     WHERE session_key NOT IN (SELECT DISTINCT session_key FROM {{ this }})
     {% endif %}
 )
+, with_location AS (
+    {{ f1_asof_join(left='car_data', right=ref('stg_location'), on=['session_key', 'driver_number'], left_ts='telemetry_timestamp', right_ts='location_timestamp',
+        left_cols=['session_key', 'meeting_key', 'driver_number', 'telemetry_timestamp', 'rpm', 'speed', 'gear', 'throttle', 'brake', 'drs'],
+        right_cols=['location_timestamp', 'x_coordinate', 'y_coordinate', 'z_coordinate']) }}
+),
+with_lap AS (
+    {{ f1_asof_join(left='with_location', right=ref('stg_laps'), on=['session_key', 'driver_number'], left_ts='telemetry_timestamp', right_ts='date_start',
+        left_cols=['session_key', 'meeting_key', 'driver_number', 'telemetry_timestamp', 'rpm', 'speed', 'gear', 'throttle', 'brake', 'drs',
+                   'location_timestamp', 'x_coordinate', 'y_coordinate', 'z_coordinate'],
+        right_cols=['lap_number']) }}
+)
 
 SELECT
-    c.session_key,
-    c.meeting_key,
-    c.driver_number,
-    c.telemetry_timestamp,
-    l.lap_number,
-    c.rpm, c.speed, c.gear, c.throttle, c.brake, c.drs,
-    CASE WHEN epoch_ms(c.telemetry_timestamp) - epoch_ms(loc.location_timestamp) <= 2000 THEN loc.x_coordinate END AS x,
-    CASE WHEN epoch_ms(c.telemetry_timestamp) - epoch_ms(loc.location_timestamp) <= 2000 THEN loc.y_coordinate END AS y,
-    CASE WHEN epoch_ms(c.telemetry_timestamp) - epoch_ms(loc.location_timestamp) <= 2000 THEN loc.z_coordinate END AS z,
-    epoch_ms(c.telemetry_timestamp) - epoch_ms(loc.location_timestamp) AS location_age_ms
-FROM car_data c
-ASOF LEFT JOIN {{ ref('stg_location') }} loc
-    ON c.session_key = loc.session_key AND c.driver_number = loc.driver_number
-    AND c.telemetry_timestamp >= loc.location_timestamp
-ASOF LEFT JOIN {{ ref('stg_laps') }} l
-    ON c.session_key = l.session_key AND c.driver_number = l.driver_number
-    AND c.telemetry_timestamp >= l.date_start
+    session_key, meeting_key, driver_number, telemetry_timestamp, lap_number,
+    rpm, speed, gear, throttle, brake, drs,
+    CASE WHEN {{ f1_epoch_ms('telemetry_timestamp') }} - {{ f1_epoch_ms('location_timestamp') }} <= 2000 THEN x_coordinate END AS x,
+    CASE WHEN {{ f1_epoch_ms('telemetry_timestamp') }} - {{ f1_epoch_ms('location_timestamp') }} <= 2000 THEN y_coordinate END AS y,
+    CASE WHEN {{ f1_epoch_ms('telemetry_timestamp') }} - {{ f1_epoch_ms('location_timestamp') }} <= 2000 THEN z_coordinate END AS z,
+    {{ f1_epoch_ms('telemetry_timestamp') }} - {{ f1_epoch_ms('location_timestamp') }} AS location_age_ms
+FROM with_lap
