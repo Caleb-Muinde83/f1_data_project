@@ -11,18 +11,14 @@ dbt_f1_transformations:
       type: duckdb
       path: "{{ env_var('F1_DUCKDB_PATH', 'F:/DaTech/f1_data_project/f1_local_warehouse.duckdb') }}"
       threads: 1
-      settings:
-        temp_directory: "{{ env_var('F1_DUCKDB_TEMP', 'F:/DaTech/f1_data_project/duckdb_tmp') }}"
     container:
       type: duckdb
       path: "{{ env_var('F1_DUCKDB_PATH', '/opt/airflow/data/warehouse/f1_local_warehouse.duckdb') }}"
       threads: 1
-      settings:
-        temp_directory: "/opt/airflow/data/warehouse/tmp"
     ci:
       type: duckdb
       path: "{{ env_var('F1_DUCKDB_PATH', '/tmp/f1_ci.duckdb') }}"
-      threads: 2
+      threads: 1
     bigquery:
       type: bigquery
       method: oauth                       # application-default credentials (gcloud auth application-default login)

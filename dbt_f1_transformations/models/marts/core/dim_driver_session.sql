@@ -2,9 +2,15 @@
    joins after a mid-season move; join facts to this table on (session_key, driver_number) instead. #}
 WITH ranked AS (
     SELECT
-        session_key, meeting_key, driver_number, full_name, driver_acronym,
-        team_name, team_color_hex, country_code,
-        ROW_NUMBER() OVER (PARTITION BY session_key, driver_number ORDER BY team_name) AS row_num
+        CAST(session_key AS BIGINT) AS session_key, 
+        meeting_key, 
+        CAST(driver_number AS BIGINT) AS driver_number, 
+        full_name, 
+        driver_acronym,
+        team_name, 
+        team_color_hex, 
+        country_code,
+        ROW_NUMBER() OVER (PARTITION BY CAST(session_key AS BIGINT), CAST(driver_number AS BIGINT) ORDER BY team_name) AS row_num
     FROM {{ ref('stg_drivers') }}
 )
 SELECT session_key, meeting_key, driver_number, full_name, driver_acronym, team_name, team_color_hex, country_code

@@ -15,4 +15,7 @@ renamed_and_casted AS (
     FROM raw_stints
     WHERE driver_number IS NOT NULL
 )
-SELECT * FROM renamed_and_casted
+SELECT * 
+FROM renamed_and_casted
+WHERE lap_end >= lap_start 
+  AND tyre_age_at_start >= 0

@@ -28,5 +28,23 @@ renamed_and_casted AS (
         COALESCE(is_pit_out_lap, FALSE) AS is_pit_out_lap
     FROM raw_laps
     WHERE driver_number IS NOT NULL
+),
+deduplicated_laps AS (
+    -- First, filter out exact duplicate lap numbers
+    SELECT * FROM renamed_and_casted
+    QUALIFY ROW_NUMBER() OVER (
+        PARTITION BY session_key, driver_number, lap_number 
+        ORDER BY date_start ASC
+    ) = 1
 )
-SELECT * FROM renamed_and_casted
+-- Finally, filter out chronological anomalies using LAG
+SELECT * 
+FROM deduplicated_laps
+QUALIFY LAG(date_start) OVER (
+    PARTITION BY session_key, driver_number 
+    ORDER BY lap_number
+) IS NULL 
+OR date_start > LAG(date_start) OVER (
+    PARTITION BY session_key, driver_number 
+    ORDER BY lap_number
+)

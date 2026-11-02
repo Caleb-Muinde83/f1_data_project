@@ -4,7 +4,7 @@ WITH staging_drivers AS (
 
 deduplicated_drivers AS (
     SELECT
-        driver_number,
+        CAST(driver_number AS BIGINT) AS driver_number,
         full_name,
         driver_acronym,
         team_name,
@@ -12,7 +12,7 @@ deduplicated_drivers AS (
         country_code,
         headshot_url,
         -- This ranks a driver's rows, putting their most recent session as #1
-        ROW_NUMBER() OVER (PARTITION BY driver_number ORDER BY session_key DESC) as row_num
+        ROW_NUMBER() OVER (PARTITION BY CAST(driver_number AS BIGINT) ORDER BY session_key DESC) as row_num
     FROM staging_drivers
 )
 

@@ -6,22 +6,62 @@
 #}
 WITH laps AS (
     SELECT
-        l.*,
+        CAST(session_key AS INTEGER) AS session_key,
+        CAST(meeting_key AS INTEGER) AS meeting_key,
+        CAST(driver_number AS INTEGER) AS driver_number,
+        CAST(lap_number AS INTEGER) AS lap_number,
+        date_start,
+        lap_duration,
+        duration_sector_1,
+        duration_sector_2,
+        duration_sector_3,
+        speed_trap_i1,
+        speed_trap_i2,
+        speed_trap_finish,
+        segments_sector_1,
+        segments_sector_2,
+        segments_sector_3,
+        is_pit_out_lap
+    FROM {{ ref('stg_laps') }}
+),
+
+calculated_laps AS (
+    SELECT
+        *,
         COALESCE(
-            LEAD(l.date_start) OVER (PARTITION BY l.session_key, l.driver_number ORDER BY l.lap_number),
-            {{ f1_ts_add_seconds('l.date_start', 'l.lap_duration') }}
+            LEAD(date_start) OVER (PARTITION BY session_key, driver_number ORDER BY lap_number),
+            {{ f1_ts_add_seconds('date_start', 'lap_duration') }}
         ) AS lap_end_ts,
-        MAX(l.lap_number) OVER (PARTITION BY l.session_key) AS session_lap_count
-    FROM {{ ref('stg_laps') }} l
+        MAX(lap_number) OVER (PARTITION BY session_key) AS session_lap_count
+    FROM laps
 ),
 
 sessions AS (
-    SELECT session_key, session_type, session_name, year FROM {{ ref('stg_sessions') }}
+    SELECT 
+        CAST(session_key AS INTEGER) AS session_key, 
+        session_type, 
+        session_name, 
+        year 
+    FROM {{ ref('stg_sessions') }}
+),
+
+stints AS (
+    SELECT
+        CAST(session_key AS INTEGER) AS session_key,
+        CAST(driver_number AS INTEGER) AS driver_number,
+        CAST(stint_number AS INTEGER) AS stint_number,
+        tyre_compound,
+        CAST(tyre_age_at_start AS INTEGER) AS tyre_age_at_start,
+        CAST(lap_start AS INTEGER) AS lap_start,
+        CAST(lap_end AS INTEGER) AS lap_end
+    FROM {{ ref('stg_stints') }}
 ),
 
 pit_laps AS (
     SELECT
-        session_key, driver_number, lap_number,
+        CAST(session_key AS INTEGER) AS session_key,
+        CAST(driver_number AS INTEGER) AS driver_number,
+        CAST(lap_number AS INTEGER) AS lap_number,
         MIN(pit_timestamp) AS pit_timestamp,
         MAX(pit_duration) AS pit_lane_time_seconds
     FROM {{ ref('stg_pit') }}
@@ -40,9 +80,9 @@ with_stint_and_pit AS (
         (p.lap_number IS NOT NULL) AS is_in_lap,
         p.pit_lane_time_seconds,
         p.pit_timestamp
-    FROM laps l
+    FROM calculated_laps l
     LEFT JOIN sessions s ON l.session_key = s.session_key
-    LEFT JOIN {{ ref('stg_stints') }} st
+    LEFT JOIN stints st
         ON l.session_key = st.session_key
         AND l.driver_number = st.driver_number
         AND l.lap_number BETWEEN st.lap_start AND st.lap_end
@@ -50,6 +90,11 @@ with_stint_and_pit AS (
         ON l.session_key = p.session_key
         AND l.driver_number = p.driver_number
         AND l.lap_number = p.lap_number
+    -- Deduplicate laps that fall exactly on the overlap boundary of two stints
+    QUALIFY ROW_NUMBER() OVER (
+        PARTITION BY l.session_key, l.driver_number, l.lap_number 
+        ORDER BY st.stint_number DESC
+    ) = 1
 ),
 
 with_out_lap AS (
@@ -59,22 +104,39 @@ with_out_lap AS (
     FROM with_stint_and_pit
 ),
 
+track_status_periods AS (
+    SELECT
+        CAST(session_key AS INTEGER) AS session_key,
+        period_start,
+        period_end,
+        severity_rank
+    FROM {{ ref('int_track_status_periods') }}
+),
+
 lap_track_status AS (
     SELECT
         l.session_key, l.driver_number, l.lap_number,
         MIN(p.severity_rank) AS worst_rank
     FROM with_out_lap l
-    JOIN {{ ref('int_track_status_periods') }} p
+    JOIN track_status_periods p
         ON l.session_key = p.session_key
         AND p.period_start <= l.lap_end_ts
         AND p.period_end >= l.date_start
     GROUP BY 1, 2, 3
 ),
 
+race_control AS (
+    SELECT
+        CAST(session_key AS INTEGER) AS session_key,
+        race_control_timestamp,
+        flag
+    FROM {{ ref('stg_race_control') }}
+),
+
 lap_yellow AS (
     SELECT DISTINCT l.session_key, l.driver_number, l.lap_number
     FROM with_out_lap l
-    JOIN {{ ref('stg_race_control') }} rc
+    JOIN race_control rc
         ON l.session_key = rc.session_key
         AND rc.race_control_timestamp >= l.date_start
         AND rc.race_control_timestamp < l.lap_end_ts
@@ -82,27 +144,68 @@ lap_yellow AS (
 ),
 
 spine AS (
-    SELECT session_key, driver_number, lap_number, date_start AS lap_start_ts, lap_end_ts FROM with_out_lap
+    SELECT 
+        CAST(session_key AS INTEGER) AS session_key, 
+        CAST(driver_number AS INTEGER) AS driver_number, 
+        CAST(lap_number AS INTEGER) AS lap_number, 
+        date_start AS lap_start_ts, 
+        lap_end_ts 
+    FROM with_out_lap
+    OFFSET 0
+),
+
+stg_weather_clean AS (
+    SELECT 
+        CAST(session_key AS INTEGER) AS session_key,
+        weather_timestamp,
+        air_temperature,
+        track_temperature,
+        humidity,
+        wind_speed,
+        rainfall_flag
+    FROM {{ ref('stg_weather') }}
+    OFFSET 0
+),
+
+stg_position_clean AS (
+    SELECT 
+        CAST(session_key AS INTEGER) AS session_key,
+        CAST(driver_number AS INTEGER) AS driver_number,
+        position_timestamp,
+        position
+    FROM {{ ref('stg_position') }}
+    OFFSET 0
+),
+
+stg_intervals_clean AS (
+    SELECT 
+        CAST(session_key AS INTEGER) AS session_key,
+        CAST(driver_number AS INTEGER) AS driver_number,
+        interval_timestamp,
+        gap_to_leader_raw,
+        interval_raw
+    FROM {{ ref('stg_intervals') }}
+    OFFSET 0
 ),
 
 weather_at_start AS (
-    {{ f1_asof_join(left='spine', right=ref('stg_weather'), on=['session_key'], left_ts='lap_start_ts', right_ts='weather_timestamp',
+    {{ f1_asof_join(left='spine', right='stg_weather_clean', on=['session_key'], left_ts='lap_start_ts', right_ts='weather_timestamp',
         left_cols=['session_key', 'driver_number', 'lap_number', 'lap_start_ts'],
         right_cols=['weather_timestamp', 'air_temperature', 'track_temperature', 'humidity', 'wind_speed', 'rainfall_flag']) }}
 ),
 
 position_at_start AS (
-    {{ f1_asof_join(left='spine', right=ref('stg_position'), on=['session_key', 'driver_number'], left_ts='lap_start_ts', right_ts='position_timestamp',
+    {{ f1_asof_join(left='spine', right='stg_position_clean', on=['session_key', 'driver_number'], left_ts='lap_start_ts', right_ts='position_timestamp',
         left_cols=['session_key', 'driver_number', 'lap_number', 'lap_start_ts'], right_cols=['position AS position_start']) }}
 ),
 
 position_at_end AS (
-    {{ f1_asof_join(left='spine', right=ref('stg_position'), on=['session_key', 'driver_number'], left_ts='lap_end_ts', right_ts='position_timestamp',
+    {{ f1_asof_join(left='spine', right='stg_position_clean', on=['session_key', 'driver_number'], left_ts='lap_end_ts', right_ts='position_timestamp',
         left_cols=['session_key', 'driver_number', 'lap_number', 'lap_end_ts'], right_cols=['position AS position_end']) }}
 ),
 
 gaps_at_end AS (
-    {{ f1_asof_join(left='spine', right=ref('stg_intervals'), on=['session_key', 'driver_number'], left_ts='lap_end_ts', right_ts='interval_timestamp',
+    {{ f1_asof_join(left='spine', right='stg_intervals_clean', on=['session_key', 'driver_number'], left_ts='lap_end_ts', right_ts='interval_timestamp',
         left_cols=['session_key', 'driver_number', 'lap_number', 'lap_end_ts'], right_cols=['gap_to_leader_raw', 'interval_raw']) }}
 ),
 
@@ -142,7 +245,6 @@ flagged AS (
         *,
         COALESCE(neutralisation_status, CASE WHEN has_yellow_flag THEN 'YELLOW' END, 'GREEN') AS track_status,
         (lap_number = 1) AS is_first_lap,
-        -- A "timed, comparable" lap: has a time, not first/in/out, no yellow/SC/VSC/red
         (lap_duration IS NOT NULL AND lap_duration > 0
             AND NOT is_in_lap AND NOT is_out_lap AND lap_number > 1
             AND neutralisation_status IS NULL AND NOT has_yellow_flag) AS is_clean_candidate
