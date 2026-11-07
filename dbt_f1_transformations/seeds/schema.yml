@@ -2,8 +2,15 @@ version: 2
 
 seeds:
   - name: f1_points_system
-    description: "Current Race and Sprint points scales (historical systems are not modelled)."
+    description: >
+      Season-aware championship scoring: one row per season, session type and finishing position.
+      Race: 25-18-15-12-10-8-6-4-2-1 for 2018 onward. Sprint: 3-2-1 in 2021, 8-7-6-5-4-3-2-1 from 2022.
+      Seasons outside this table are NOT scored (see assert_every_season_has_points_scale); extend the CSV
+      when you load an earlier or later season. The fastest-lap bonus is handled separately in fct_race_results.
     config:
       column_types:
+        season: "{{ 'int64' if target.type == 'bigquery' else 'integer' }}"
         position: "{{ 'int64' if target.type == 'bigquery' else 'integer' }}"
         points: "{{ 'float64' if target.type == 'bigquery' else 'double' }}"
+    data_tests:
+      - unique_combination_of_columns: {arguments: {combination_of_columns: [season, session_type, position]}}

@@ -1,4 +1,50 @@
-# Change list (against the uploaded archive)
+# Round 2: role-based dashboards and review fixes
+
+Implements `modifications.md`. Verified on the synthetic fixtures with `dbt build` (125/125 PASS on DuckDB) and `pytest dashboards/tests`
+(54 passed). NOT verified: the BigQuery build (no emulator or credentials in the authoring environment), and the Streamlit layout in a
+real browser (pages are tested headlessly with `streamlit.testing`).
+
+## Data model fixes
+* `int_lap_context.sql`: removed four standalone `OFFSET 0` clauses (valid in DuckDB, a syntax error in BigQuery).
+* `seeds/f1_points_system.csv` is now season-aware (`season, session_type, position, points`; Race 2018-2026, Sprint 3-2-1 in 2021 and 8-1 from 2022).
+  `fct_race_results` joins on season. New test `assert_every_season_has_points_scale` fails when a loaded season has no scale instead of scoring 0.
+  The BigQuery emulator seed loader was updated for the new column. Check the 2026 Sprint scale if the regulations changed.
+* `fct_team_radio` now takes the team from `dim_driver_session` (team at the time of the session), and the semantic layer gains a
+  session-aware `driver_sessions` model next to `drivers`.
+
+## Dashboard (dashboards/)
+* Navigation is now role x phase: Race Engineer / Race Analyst / Race Data Scientist, each with Pre-race, During race (replay) and Post-race, plus a Data coverage page.
+* One shared context (season > Grand Prix > session > focus and comparison driver) in the sidebar. Dark graphite theme (`.streamlit/config.toml`, `f1_dash/theme.py`).
+* Every panel carries a provenance tag (measured / derived / estimated / predicted / simulated / historical / manual) and its source.
+* "During race" is an honest REPLAY of historical data with a lap slider; it is labelled as not live. There is no live feed in this project.
+* Pre-race pages only read data that existed before the race (earlier sessions of the weekend, earlier races); tests guard against leakage.
+* New: circuit map, two-lap telemetry overlay, position progression, gap evolution, sector heatmap, timing tower, stint/pit timeline, grid base-rate
+  finishing model, replay degradation projection, lap-time anomaly screen, model error metrics and residuals, model registry.
+* Things the data cannot provide (setup, tyre temperatures, power-unit state, forecasts) are shown as explicit "not available" panels, not faked.
+* `f1_dash/charts.py` became a package (old import paths still work); `pages.py` was replaced by `f1_dash/workspaces/`.
+
+## Fixes after first look in a browser
+* Analyst timing tower used the position feed sampled at lap end and could show two cars in one position; it now uses cumulative race time (same source as the position chart).
+* Anomaly screen ignores SC/VSC/yellow/red laps (slow by definition). Float noise (1e-13) is rounded out of query results. Empty charts are short. Missing-telemetry traces are explained.
+
+* The sidebar now shows which warehouse file is open and warns loudly when it is the synthetic CI fixture warehouse (an exported `F1_DUCKDB_PATH` had silently pointed `dbt --target dev` and the dashboard at it).
+* Circuit map: colour-bar title no longer collides with the legend.
+
+## Fixes after the first real-data run
+* `StreamlitDuplicateElementId`: identical charts on one page (for example two 'no telemetry' placeholders) collided. All charts now go through `components/plot.show()`, which gives each a unique key.
+* `ResourceInUseException`: the dashboard shared one DuckDB connection across overlapping Streamlit runs; each run now gets its own cursor.
+* Regression tests for both, for sessions without telemetry, and for concurrent reads.
+
+* **Real-data defect fixed:** in practice and qualifying OpenF1 reports every garage visit as a pit stop (12,462 + 5,706 rows with median pit-lane times of 340 s and 260 s, against 2,568 race stops at 23.5 s). They flooded `fct_pit_stops`, so circuit-level pit-loss medians (used by the strategy simulator) were meaningless. `fct_pit_stops` now keeps Race and Sprint stops only. New tests: `assert_pit_stops_only_in_races`, `assert_circuit_pit_loss_is_plausible`; the fixtures now include garage visits. `assert_pit_lane_time_plausible` remains a warn-level review of long race stops (red flags, stuck cars).
+
+## Not done (see the Data coverage page)
+Serving layer (FastAPI/WebSockets), splitting `int_lap_context`, ML models ML-02/06/07/12, SHAP/feature importance, drift monitoring,
+multi-driver field simulation, saved views and cross-role incident workspace.
+
+
+---
+
+# Round 1: change list (against the uploaded archive)
 
 Run `make ci-test` for the full local suite. See docs/ANALYTICS_GUIDE.md for what each addition does, its assumptions, how it was
 verified, and what remains unverified or not built.

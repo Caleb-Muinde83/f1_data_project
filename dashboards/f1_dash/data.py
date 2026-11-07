@@ -6,11 +6,16 @@ import pandas as pd
 DEFAULT_DB = os.environ.get("F1_DUCKDB_PATH", "f1_local_warehouse.duckdb")
 
 
+CURRENT_DB = None      # path of the warehouse opened by connect(), shown in the sidebar
+
+
 def connect(path: str = None):
     """Open the warehouse READ-ONLY. DuckDB allows one writer: if dbt is running you get a clear error, not a hang."""
     path = path or DEFAULT_DB
     if not os.path.exists(path):
         raise FileNotFoundError(f"Warehouse not found at {path}. Set F1_DUCKDB_PATH or build it with dbt first.")
+    global CURRENT_DB
+    CURRENT_DB = path
     try:
         return duckdb.connect(path, read_only=True)
     except duckdb.IOException as exc:
@@ -18,7 +23,11 @@ def connect(path: str = None):
 
 
 def q(con, sql: str, params=None) -> pd.DataFrame:
-    return con.execute(sql, params or []).df()
+    """Run a query and return a DataFrame. Floats are rounded to 6 decimals: it removes display noise such as 1e-13 'time left on table'."""
+    df = con.execute(sql, params or []).df()
+    fcols = df.select_dtypes("float").columns
+    df[fcols] = df[fcols].round(6)
+    return df
 
 
 def sessions(con, race_only: bool = False):
@@ -110,6 +119,224 @@ def sc_hazard(con, circuit_key: int = None):
 
 
 def radio(con, session_key: int):
-    return q(con, """SELECT radio_timestamp, driver_name, lap_number, tyre_compound, track_status, transcript,
+    return q(con, """SELECT radio_timestamp, driver_number, driver_name, lap_number, tyre_compound, track_status, transcript,
         mentions_pit_call, mentions_tyres, mentions_neutralisation, mentions_drs, mentions_penalty, mentions_power_unit
         FROM fct_radio_messages WHERE session_key = ? ORDER BY radio_timestamp""", [session_key])
+
+
+# ---------------------------------------------------------------------------------------------------------------------
+# Context and session navigation (season -> Grand Prix -> session)
+# ---------------------------------------------------------------------------------------------------------------------
+def meetings(con):
+    return q(con, """SELECT year, meeting_key, MAX(meeting_name) AS meeting_name, MAX(location) AS location, MAX(circuit_key) AS circuit_key,
+        MIN(session_start_time) AS first_session FROM dim_sessions GROUP BY year, meeting_key ORDER BY first_session DESC""")
+
+
+def meeting_sessions(con, meeting_key: int):
+    return q(con, "SELECT session_key, session_name, session_type, session_start_time, year, circuit_key, location FROM dim_sessions "
+                  "WHERE meeting_key = ? ORDER BY session_start_time", [meeting_key])
+
+
+def session_row(con, session_key: int):
+    df = q(con, "SELECT session_key, meeting_key, year, circuit_key, circuit_short_name, location, session_name, session_type, session_start_time "
+                "FROM dim_sessions WHERE session_key = ?", [session_key])
+    return None if df.empty else df.iloc[0]
+
+
+def session_laps(con, session_key: int) -> int:
+    df = q(con, "SELECT MAX(lap_number) AS n FROM fct_lap_performance WHERE session_key = ?", [session_key])
+    return int(df.iloc[0, 0]) if not df.empty and df.iloc[0, 0] == df.iloc[0, 0] and df.iloc[0, 0] is not None else 0
+
+
+def session_has(con, table: str, session_key: int) -> bool:
+    return int(q(con, f"SELECT COUNT(*) FROM {table} WHERE session_key = ?", [session_key]).iloc[0, 0]) > 0
+
+
+# ---------------------------------------------------------------------------------------------------------------------
+# Pre-race: ONLY information that existed before the race started (no leakage)
+# ---------------------------------------------------------------------------------------------------------------------
+def prior_sessions(con, meeting_key: int, before_ts):
+    """Sessions of the same Grand Prix weekend that started before the target race."""
+    return q(con, "SELECT session_key, session_name, session_type, session_start_time FROM dim_sessions "
+                  "WHERE meeting_key = ? AND session_start_time < ? ORDER BY session_start_time", [meeting_key, before_ts])
+
+
+def prior_races_at_circuit(con, circuit_key: int, before_ts):
+    return q(con, """SELECT s.year, s.session_key, s.session_name, s.session_start_time, d.driver_acronym AS winner, d.team_name AS winning_team
+        FROM dim_sessions s
+        JOIN fct_race_results r ON r.session_key = s.session_key AND r.final_position = 1
+        LEFT JOIN dim_driver_session d ON d.session_key = r.session_key AND d.driver_number = r.driver_number
+        WHERE s.circuit_key = ? AND s.session_type IN ('Race', 'Sprint') AND s.session_start_time < ? ORDER BY s.session_start_time DESC""",
+             [circuit_key, before_ts])
+
+
+def qualifying_results(con, session_keys):
+    if not len(session_keys):
+        return pd.DataFrame()
+    ph = ",".join("?" * len(session_keys))
+    return q(con, f"""SELECT s.session_name, r.final_position AS pos, d.driver_acronym AS driver, d.team_name AS team,
+        r.q1_seconds, r.q2_seconds, r.q3_seconds
+        FROM fct_race_results r JOIN dim_sessions s USING (session_key)
+        LEFT JOIN dim_driver_session d USING (session_key, driver_number)
+        WHERE r.session_key IN ({ph}) AND s.session_type = 'Qualifying' ORDER BY s.session_start_time, r.final_position""", list(session_keys))
+
+
+def grid_finish_history(con, before_ts):
+    """(grid, finish) pairs of completed races BEFORE the target race: the base rate for finishing-position probabilities."""
+    return q(con, """SELECT r.session_key, r.grid_position, r.final_position, r.classification_status
+        FROM fct_race_results r JOIN dim_sessions s USING (session_key)
+        WHERE s.session_type = 'Race' AND s.session_start_time < ? AND r.grid_position IS NOT NULL""", [before_ts])
+
+
+def starting_grid(con, session_key: int):
+    return q(con, """SELECT r.grid_position AS grid, d.driver_acronym AS driver, d.team_name AS team, r.driver_number
+        FROM fct_race_results r LEFT JOIN dim_driver_session d USING (session_key, driver_number)
+        WHERE r.session_key = ? AND r.grid_position IS NOT NULL ORDER BY r.grid_position""", [session_key])
+
+
+def compound_pace(con, session_keys):
+    if not len(session_keys):
+        return pd.DataFrame()
+    ph = ",".join("?" * len(session_keys))
+    return q(con, f"""SELECT s.session_name, d.driver_acronym AS driver, c.tyre_compound, c.clean_laps, c.fresh_tyre_pace_seconds,
+        c.degradation_seconds_per_lap, c.r_squared, c.min_tyre_age, c.max_tyre_age
+        FROM fct_compound_pace_model c JOIN dim_sessions s USING (session_key)
+        LEFT JOIN dim_driver_session d USING (session_key, driver_number)
+        WHERE c.session_key IN ({ph}) ORDER BY s.session_start_time, d.driver_acronym, c.tyre_compound""", list(session_keys))
+
+
+def weather_by_lap(con, session_keys):
+    if not len(session_keys):
+        return pd.DataFrame()
+    ph = ",".join("?" * len(session_keys))
+    return q(con, f"""SELECT s.session_name, w.session_key, w.lap_number, AVG(w.air_temperature) AS air_temp, AVG(w.track_temperature) AS track_temp,
+        AVG(w.humidity) AS humidity, AVG(w.wind_speed) AS wind_speed, MAX(CASE WHEN w.is_raining_at_lap_start THEN 1 ELSE 0 END) AS raining
+        FROM fct_weather_impact w JOIN dim_sessions s USING (session_key)
+        WHERE w.session_key IN ({ph}) GROUP BY ALL ORDER BY s.session_name, w.lap_number""", list(session_keys))
+
+
+def standings_before(con, session_key: int):
+    return q(con, """SELECT d.driver_acronym AS driver, d.team_name AS team, c.season_starting_position AS season_start_pos,
+        c.current_championship_position AS pos, c.total_points AS points
+        FROM fct_championship_standings c LEFT JOIN dim_driver_session d USING (session_key, driver_number)
+        WHERE c.session_key = ? ORDER BY c.current_championship_position""", [session_key])
+
+
+def constructor_standings(con, session_key: int):
+    return q(con, "SELECT team_name AS team, current_championship_position AS pos, total_points AS points "
+                  "FROM fct_constructor_standings WHERE session_key = ? ORDER BY current_championship_position", [session_key])
+
+
+# ---------------------------------------------------------------------------------------------------------------------
+# Timing, telemetry and events (used by all three roles)
+# ---------------------------------------------------------------------------------------------------------------------
+def lap_table(con, session_key: int):
+    """One row per driver per lap with timing, gaps, tyre and track state (the analyst's central table)."""
+    return q(con, """SELECT d.driver_acronym AS driver, d.team_name AS team, l.driver_number, l.lap_number, l.lap_time_seconds,
+        l.duration_sector_1 AS s1, l.duration_sector_2 AS s2, l.duration_sector_3 AS s3, l.speed_trap_finish,
+        l.tyre_compound, l.tyre_age_this_lap, l.stint_number, l.track_status, l.is_in_lap, l.is_out_lap, l.is_representative_lap,
+        l.fuel_corrected_lap_time_seconds, l.delta_to_driver_median_seconds, l.delta_to_session_best_representative_seconds,
+        l.position_end, l.gap_to_leader_end_seconds, l.gap_to_car_ahead_end_seconds, l.lap_start_ts
+        FROM fct_lap_performance l LEFT JOIN dim_driver_session d USING (session_key, driver_number)
+        WHERE l.session_key = ? ORDER BY l.lap_number, l.position_end""", [session_key])
+
+
+def telemetry_lap_summary(con, session_key: int):
+    return q(con, """SELECT d.driver_acronym AS driver, t.driver_number, t.lap_number, t.top_speed_kph, t.min_speed_kph, t.avg_speed_kph,
+        t.full_throttle_fraction, t.braking_fraction, t.braking_zone_count, t.drs_open_fraction, t.max_gear
+        FROM fct_telemetry_lap_summary t LEFT JOIN dim_driver_session d USING (session_key, driver_number)
+        WHERE t.session_key = ? ORDER BY t.lap_number, d.driver_acronym""", [session_key])
+
+
+def fastest_laps(con, session_key: int):
+    return q(con, """SELECT d.driver_acronym AS driver, f.driver_number, f.lap_number, f.fastest_lap_time_seconds, f.tyre_compound,
+        f.speed_trap_finish, f.theoretical_best_lap_seconds, f.time_left_on_table_seconds, f.session_rank, f.gap_to_session_fastest_seconds
+        FROM fct_fastest_laps f LEFT JOIN dim_driver_session d USING (session_key, driver_number)
+        WHERE f.session_key = ? ORDER BY f.session_rank""", [session_key])
+
+
+def distance_trace(con, session_key: int, driver_number: int, lap_number: int):
+    return q(con, """SELECT distance_m, avg_speed_kph AS speed_kph, avg_throttle AS throttle, max_brake AS brake, gear, x, y, elapsed_seconds
+        FROM fct_telemetry_distance_trace WHERE session_key = ? AND driver_number = ? AND lap_number = ? ORDER BY distance_bin""",
+             [session_key, driver_number, lap_number])
+
+
+def overtakes(con, session_key: int):
+    return q(con, """SELECT o.lap_number, a.driver_acronym AS overtaker, b.driver_acronym AS overtaken, o.post_overtake_position AS new_pos,
+        o.was_in_drs_range_before_pass AS drs_range_proxy, o.is_probable_pit_cycle_pass AS pit_cycle, o.overtaker_tyre_compound, o.tyre_age_delta
+        FROM fct_overtakes o
+        LEFT JOIN dim_driver_session a ON a.session_key = o.session_key AND a.driver_number = o.overtaking_driver_number
+        LEFT JOIN dim_driver_session b ON b.session_key = o.session_key AND b.driver_number = o.overtaken_driver_number
+        WHERE o.session_key = ? ORDER BY o.lap_number""", [session_key])
+
+
+def penalties(con, session_key: int):
+    return q(con, """SELECT p.lap_number, d.driver_acronym AS driver, p.penalty_type, p.penalty_seconds, p.reason
+        FROM fct_penalties p LEFT JOIN dim_driver_session d USING (session_key, driver_number)
+        WHERE p.session_key = ? ORDER BY p.lap_number""", [session_key])
+
+
+def neutralisations(con, session_key: int):
+    return q(con, "SELECT track_status, start_lap, end_lap, duration_laps FROM fct_safety_car_events WHERE session_key = ? ORDER BY start_lap", [session_key])
+
+
+def lap_incidents(con, session_key: int):
+    return q(con, """SELECT i.lap_number, d.driver_acronym AS driver, i.neutralisation_status, i.primary_flag, i.incident_categories,
+        i.race_control_message_count AS messages
+        FROM fct_lap_incidents i LEFT JOIN dim_driver_session d USING (session_key, driver_number)
+        WHERE i.session_key = ? AND i.is_affected_by_incident ORDER BY i.lap_number, d.driver_acronym""", [session_key])
+
+
+def positions_by_lap(con, session_key: int):
+    return q(con, """SELECT t.lap_number, d.driver_acronym AS driver, t.position_by_cumulative_time AS position
+        FROM fct_race_trace t LEFT JOIN dim_driver_session d USING (session_key, driver_number)
+        WHERE t.session_key = ? ORDER BY t.lap_number, t.position_by_cumulative_time""", [session_key])
+
+
+def pit_loss(con, circuit_key: int):
+    return q(con, "SELECT * FROM fct_pit_loss_by_circuit WHERE circuit_key = ?", [circuit_key])
+
+
+def data_coverage(con):
+    """Row counts of the marts the dashboard reads, to show what the warehouse does and does not contain."""
+    tables = ["dim_sessions", "dim_driver_session", "fct_lap_performance", "fct_telemetry_lap_summary", "fct_telemetry_distance_trace",
+              "fct_race_results", "fct_race_trace", "fct_stints", "fct_pit_stops", "fct_overtakes", "fct_penalties", "fct_weather_impact",
+              "fct_safety_car_events", "fct_compound_pace_model", "fct_radio_messages", "dim_session_corners"]
+    rows = []
+    for t in tables:
+        try:
+            rows.append({"table": t, "rows": int(q(con, f"SELECT COUNT(*) FROM {t}").iloc[0, 0])})
+        except Exception:
+            rows.append({"table": t, "rows": None})
+    return pd.DataFrame(rows)
+
+
+def points_before(con, year: int, before_ts):
+    """Championship points per driver computed from results of sessions that started BEFORE `before_ts` (leakage-safe standings)."""
+    return q(con, """SELECT d.driver_acronym AS driver, d.team_name AS team, p.cumulative_points AS points, p.championship_position_after_session AS pos
+        FROM fct_points_progression p LEFT JOIN dim_driver_session d USING (session_key, driver_number)
+        WHERE p.year = ? AND p.session_start_time < ?
+        QUALIFY ROW_NUMBER() OVER (PARTITION BY p.driver_number ORDER BY p.session_start_time DESC) = 1
+        ORDER BY pos""", [year, before_ts])
+
+
+def sc_events_at_circuit(con, circuit_key: int, before_ts):
+    return q(con, """SELECT e.year, e.track_status, e.start_lap, e.end_lap, e.duration_laps FROM fct_safety_car_events e JOIN dim_sessions s USING (session_key)
+        WHERE e.circuit_key = ? AND s.session_start_time < ? ORDER BY s.session_start_time DESC, e.start_lap""", [circuit_key, before_ts])
+
+
+def race_order(con, session_key: int):
+    """Position and gaps from CUMULATIVE race time: internally consistent (no duplicate positions), unlike the position feed sampled at lap end."""
+    return q(con, """SELECT t.lap_number, t.driver_number, t.position_by_cumulative_time AS position,
+        t.gap_to_leader_by_cumulative_time_seconds AS gap_to_leader,
+        t.gap_to_leader_by_cumulative_time_seconds - LAG(t.gap_to_leader_by_cumulative_time_seconds) OVER (PARTITION BY t.lap_number ORDER BY t.position_by_cumulative_time) AS interval
+        FROM fct_race_trace t WHERE t.session_key = ? ORDER BY t.lap_number, t.position_by_cumulative_time""", [session_key])
+
+
+def is_fixture_warehouse(con) -> bool:
+    """True for the synthetic CI warehouse (built by `make ci-test`): by file name, or by holding only the fixture session keys 9001-9003."""
+    name = (CURRENT_DB or "").replace("\\", "/").lower()
+    if "ci.duckdb" in name or ".ci_raw" in name:
+        return True
+    keys = set(q(con, "SELECT session_key FROM dim_sessions")["session_key"])
+    return bool(keys) and keys <= {9001, 9002, 9003}

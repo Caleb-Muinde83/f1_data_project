@@ -1,5 +1,6 @@
-{# Classification + championship points. Points follow the seed f1_points_system (current Race and Sprint scales);
-   historical scoring systems are NOT modelled. The fastest-lap bonus applies to Race sessions up to
+{# Classification + championship points. Points follow the SEASON-AWARE seed f1_points_system (season, session_type, position),
+   so a Sprint in 2021 scores 3-2-1 and a Sprint in 2023 scores 8-1. Seasons missing from the seed score 0 and are caught by
+   tests/assert_every_season_has_points_scale.sql. The fastest-lap bonus applies to Race sessions up to
    var fastest_lap_bonus_last_year for drivers finishing in the top 10. DSQ/DNS score 0. #}
 WITH results AS (
     SELECT * FROM {{ ref('stg_session_result') }}
@@ -53,4 +54,4 @@ SELECT
              THEN 1 ELSE 0 END AS total_points
 FROM calc c
 LEFT JOIN {{ ref('f1_points_system') }} p
-    ON c.session_type = p.session_type AND c.final_position = p.position
+    ON c.year = p.season AND c.session_type = p.session_type AND c.final_position = p.position

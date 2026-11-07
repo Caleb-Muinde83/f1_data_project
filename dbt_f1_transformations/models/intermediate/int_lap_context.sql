@@ -151,7 +151,6 @@ spine AS (
         date_start AS lap_start_ts, 
         lap_end_ts 
     FROM with_out_lap
-    OFFSET 0
 ),
 
 stg_weather_clean AS (
@@ -164,7 +163,6 @@ stg_weather_clean AS (
         wind_speed,
         rainfall_flag
     FROM {{ ref('stg_weather') }}
-    OFFSET 0
 ),
 
 stg_position_clean AS (
@@ -174,7 +172,6 @@ stg_position_clean AS (
         position_timestamp,
         position
     FROM {{ ref('stg_position') }}
-    OFFSET 0
 ),
 
 stg_intervals_clean AS (
@@ -185,7 +182,6 @@ stg_intervals_clean AS (
         gap_to_leader_raw,
         interval_raw
     FROM {{ ref('stg_intervals') }}
-    OFFSET 0
 ),
 
 weather_at_start AS (

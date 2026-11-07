@@ -12,8 +12,8 @@ try:
 except Exception:
     c.create_dataset(bigquery.Dataset(f"{project}.{dataset}"))
 rows = list(csv.DictReader(open(seed_csv)))
-data = "\n".join(json.dumps({"session_type": r["session_type"], "position": int(r["position"]), "points": float(r["points"])}) for r in rows).encode()
-schema = [bigquery.SchemaField("session_type", "STRING"), bigquery.SchemaField("position", "INT64"), bigquery.SchemaField("points", "FLOAT64")]
+data = "\n".join(json.dumps({"season": int(r["season"]), "session_type": r["session_type"], "position": int(r["position"]), "points": float(r["points"])}) for r in rows).encode()
+schema = [bigquery.SchemaField("season", "INT64"), bigquery.SchemaField("session_type", "STRING"), bigquery.SchemaField("position", "INT64"), bigquery.SchemaField("points", "FLOAT64")]
 c.load_table_from_file(io.BytesIO(data), f"{project}.{dataset}.f1_points_system",
                        job_config=bigquery.LoadJobConfig(source_format="NEWLINE_DELIMITED_JSON", schema=schema, write_disposition="WRITE_TRUNCATE")).result()
 print(f"seed loaded: {len(rows)} rows")

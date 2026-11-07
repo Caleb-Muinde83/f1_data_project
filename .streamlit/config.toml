@@ -1,0 +1,8 @@
+# Dark graphite motorsport theme. Streamlit reads this from the directory you launch it in (run from the repository root).
+[theme]
+base = "dark"
+primaryColor = "#e10600"
+backgroundColor = "#0e1013"
+secondaryBackgroundColor = "#171a1f"
+textColor = "#e8eaed"
+font = "sans serif"

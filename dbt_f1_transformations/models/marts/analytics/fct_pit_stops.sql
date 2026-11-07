@@ -1,9 +1,14 @@
 {# One row per pit stop. pit_lane_time_seconds is what OpenF1 reports (pit entry to exit), NOT stationary time.
    time_lost_seconds = (in-lap + out-lap) - 2 x the driver's median clean lap: it is only meaningful under green
    flags, and is_under_neutralisation flags stops made under SC/VSC/red where the real cost is much lower.
-   position change across the stop includes any on-track passes made on the out-lap. #}
+   position change across the stop includes any on-track passes made on the out-lap.
+   ONLY Race and Sprint sessions are kept: in practice and qualifying OpenF1 reports every garage visit as a pit stop
+   (real data: median pit-lane time 340 s in practice vs 23.5 s in races), which would swamp circuit pit-loss medians. #}
 WITH pits AS (
-    SELECT * FROM {{ ref('stg_pit') }} WHERE pit_duration IS NOT NULL
+    SELECT p.*
+    FROM {{ ref('stg_pit') }} p
+    JOIN {{ ref('stg_sessions') }} s ON p.session_key = s.session_key
+    WHERE p.pit_duration IS NOT NULL AND s.session_type IN ('Race', 'Sprint')
 ),
 ctx AS (
     SELECT * FROM {{ ref('int_lap_context') }}

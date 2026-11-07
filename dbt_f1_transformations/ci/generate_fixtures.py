@@ -80,6 +80,8 @@ def build_session(key, mk, stype, start):
             cum[n] += d
             if pit_lap and lap == pit_lap:
                 pits.append({"session_key": key, "meeting_key": mk, "driver_number": n, "lap_number": lap, "date": iso(ds + timedelta(seconds=d - 20)), "pit_duration": 22.4})
+            if not is_race and lap == 3:      # practice/qualifying: a garage visit, reported as a 'pit stop' with minutes of pit-lane time
+                pits.append({"session_key": key, "meeting_key": mk, "driver_number": n, "lap_number": lap, "date": iso(ds + timedelta(seconds=d - 20)), "pit_duration": 300.0 + n})
     return laps, starts, pits, stints, cum
 
 for key, mk, stype, sname, start in SESSIONS:

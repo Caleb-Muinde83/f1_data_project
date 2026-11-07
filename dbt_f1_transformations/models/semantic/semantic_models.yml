@@ -23,7 +23,7 @@ semantic_models:
       - {name: session_count, expr: "1", agg: sum}
 
   - name: drivers
-    description: "Latest known identity and team per driver number (use dim_driver_session for team at a point in time)."
+    description: "Latest known identity and team per driver number. For historical analysis use `driver_sessions` (team at the time of the session)."
     model: ref('dim_drivers')
     entities:
       - {name: driver, type: primary, expr: driver_number}
@@ -31,6 +31,18 @@ semantic_models:
       - {name: full_name, type: categorical}
       - {name: driver_acronym, type: categorical}
       - {name: team_name, type: categorical}
+
+  - name: driver_sessions
+    description: "Driver identity and team AS OF each session (keeps mid-season team changes). Prefer this over `drivers` for any historical analysis."
+    model: ref('dim_driver_session')
+    entities:
+      - {name: driver_session, type: primary, expr: "CONCAT(CAST(session_key AS VARCHAR), '-', CAST(driver_number AS VARCHAR))"}
+      - {name: session, type: foreign, expr: session_key}
+      - {name: driver, type: foreign, expr: driver_number}
+    dimensions:
+      - {name: session_driver_name, type: categorical, expr: full_name}
+      - {name: session_driver_acronym, type: categorical, expr: driver_acronym}
+      - {name: session_team_name, type: categorical, expr: team_name}
 
   - name: laps
     description: "One row per driver per lap with tyre, track status and pace flags."
