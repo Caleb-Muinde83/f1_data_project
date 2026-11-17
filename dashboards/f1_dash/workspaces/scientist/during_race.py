@@ -3,7 +3,7 @@ import streamlit as st
 from ... import charts, data, insights
 from ...components import plot, header, kpis, race_timeline
 from ...provenance import panel
-from .._common import need_context, need_race
+from .._common import need_context, need_laps, need_race
 
 
 def render(con):
@@ -15,7 +15,9 @@ def render(con):
     if not need_race(ctx, "The race replay"):
         return
     total = data.session_laps(con, ctx.session_key)
-    lap = race_timeline.replay_controls(total, key="ds_dur_lap")
+    if not need_laps(total, ctx.session_name):
+        return
+    lap = race_timeline.replay_controls(total, key="ds_dur_lap", events=data.race_events(con, ctx.session_key))
     laps = data.lap_table(con, ctx.session_key)
     upto = laps[laps.lap_number <= lap]
 
@@ -27,12 +29,16 @@ def render(con):
         kpis.kpi_row([("Compound", fit["compound"], f"{fit['n']} clean laps in fit"), ("Degradation", f"{fit['slope']:+.3f} s/lap", "fitted slope"),
                       ("Residual sigma", f"{fit['sigma']:.2f} s", "lap-to-lap scatter"), ("Laps to +1.0 s", str(n_loss) if n_loss else "n/a", "from fitted start pace")])
     plot.show(charts.degradation_projection_fig(fit), st)
+    if not fit:
+        st.caption(insights.fit_diagnostics(laps, ctx.driver, lap))
 
     c1, c2 = st.columns(2)
     with c1:
         panel("Lap-time anomaly screen", "estimated", note="Robust z-score on laps seen so far. Flags laps to inspect; it does not say why.")
         an = insights.robust_anomalies(upto[upto.driver_number == ctx.driver]) if ctx.driver is not None else upto.head(0)
         plot.show(charts.anomaly_fig(an), st)
+        if an.empty:
+            st.caption(f"{ctx.acronym(ctx.driver)}: no timed green-flag laps up to lap {lap} to score (SC/VSC, in and out laps are excluded).")
     with c2:
         remaining = max(total - lap, 0)
         panel("Safety car hazard with laps remaining", "estimated", source="fct_safety_car_hazard")

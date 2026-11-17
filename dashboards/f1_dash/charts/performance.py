@@ -83,16 +83,36 @@ def pace_rolling_fig(df: pd.DataFrame, drivers, window: int = 3):
     return fig
 
 
-def sector_heatmap_fig(df: pd.DataFrame):
-    """Best sector per driver relative to the session-best sector (seconds lost)."""
+def sector_heatmap_fig(df: pd.DataFrame, max_ratio: float = 1.07, clip_seconds: float = 1.5):
+    """Best sector per driver relative to the session-best sector. Drivers whose best lap is slower than `max_ratio` x the session best (no real push
+    lap) are hidden, and the colour scale is clipped at `clip_seconds`, so a few 14 s outliers do not turn every other cell the same green."""
     cols = ["s1", "s2", "s3"]
-    if lacks(df, "driver", "is_representative_lap", *cols):
+    if lacks(df, "driver", "is_representative_lap", "lap_time_seconds", *cols):
         return empty("No sector times for this session")
-    d = df[df["is_representative_lap"]].groupby("driver")[cols].min()
+    rep = df[df["is_representative_lap"]]
+    best_lap = rep.groupby("driver")["lap_time_seconds"].min()
+    if best_lap.empty:
+        return empty("No sector times for this session")
+    keep = best_lap[best_lap <= max_ratio * best_lap.min()].index
+    d = rep[rep["driver"].isin(keep)].groupby("driver")[cols].min()
     if d.empty or d.isna().all().all():
         return empty("No sector times for this session")
     loss = d - d.min()
-    fig = go.Figure(go.Heatmap(z=loss.values, x=["Sector 1", "Sector 2", "Sector 3"], y=list(loss.index), colorscale="RdYlGn_r",
-                               colorbar={"title": "s lost"}, hovertemplate="%{y} %{x}: +%{z:.3f}s<extra></extra>"))
+    fig = go.Figure(go.Heatmap(z=loss.values, x=["Sector 1", "Sector 2", "Sector 3"], y=list(loss.index), colorscale="RdYlGn_r", zmin=0, zmax=clip_seconds,
+                               colorbar={"title": f"s lost (clipped at {clip_seconds})"}, text=loss.round(2).astype(str).values, texttemplate="%{text}",
+                               hovertemplate="%{y} %{x}: +%{z:.3f}s<extra></extra>"))
     fig.update_yaxes(autorange="reversed")
+    return fig
+
+
+def event_timeline_fig(events: pd.DataFrame, current_lap: int = None):
+    """Every race event on one lap axis (one row per kind). `current_lap` draws the replay clock."""
+    if lacks(events, "lap", "kind", "detail"):
+        return empty("No events recorded for this session")
+    fig = px.scatter(events.assign(driver=events["driver"].fillna("")), x="lap", y="kind", color="kind", hover_data={"detail": True, "driver": True, "kind": False},
+                     labels={"lap": "Lap", "kind": ""})
+    fig.update_traces(marker={"size": 11, "symbol": "diamond"})
+    if current_lap is not None:
+        fig.add_vline(x=current_lap, line_dash="dot", line_color="#e10600", annotation_text="replay")
+    fig.update_layout(showlegend=False, height=260, margin={"t": 20})
     return fig

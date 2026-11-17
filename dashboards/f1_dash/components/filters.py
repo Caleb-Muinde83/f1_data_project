@@ -21,7 +21,8 @@ def sidebar(con):
         sk = st.selectbox("Session", list(labels), format_func=labels.get, index=len(labels) - 1, key="ctx_session")
         drv = data.drivers(con, sk)
         nums = list(drv.driver_number)
-        fmt = {int(r.driver_number): f"{r.driver_acronym} - {r.team_name}" for r in drv.itertuples()}
+        with_laps = data.drivers_with_laps(con, sk)
+        fmt = {int(r.driver_number): f"{r.driver_acronym} - {r.team_name}" + ("" if int(r.driver_number) in with_laps else " (no laps)") for r in drv.itertuples()}
         if nums:
             st.selectbox("Focus driver", nums, format_func=fmt.get, key="ctx_driver")
             others = [n for n in nums if n != st.session_state.get("ctx_driver")]

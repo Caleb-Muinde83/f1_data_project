@@ -1,7 +1,7 @@
 """Race Engineer / Pre-race: is the car and driver ready? Uses ONLY earlier sessions of this weekend."""
 import streamlit as st
-from ... import charts, data
-from ...components import plot, header, telemetry
+from ... import charts, data, insights
+from ...components import plot, header, pick, telemetry
 from ...provenance import panel
 from .._common import need_context
 
@@ -18,8 +18,14 @@ def render(con):
     if prior.empty:
         st.info("No earlier session of this weekend in the warehouse, so there is no baseline to review.")
     else:
-        labels = {int(r.session_key): f"{r.session_name} ({r.session_key})" for r in prior.itertuples()}
-        base_sk = st.selectbox("Baseline session", list(labels), format_func=labels.get, index=len(labels) - 1, key="eng_pre_base")
+        have_tel = data.sessions_with_telemetry(con)
+        labels = {int(r.session_key): f"{r.session_name} ({r.session_key})" + ("" if int(r.session_key) in have_tel else " - no telemetry built") for r in prior.itertuples()}
+        keys = list(labels)
+        with_tel = [k for k in keys if k in have_tel]
+        base_sk = st.selectbox("Baseline session", keys, format_func=labels.get, index=keys.index(with_tel[-1]) if with_tel else len(keys) - 1, key=f"eng_pre_base_{ctx.session_key}")
+        if base_sk not in have_tel:
+            st.info(f"Telemetry has not been built for this baseline session, so the telemetry, circuit and corner panels are empty. Build it with: "
+                    f"`dbt build --select fct_telemetry+ --vars '{{telemetry_only_sessions: [{base_sk}]}}'`")
 
     t_base, t_circuit, t_tyres, t_weather, t_setup = st.tabs(["Telemetry baseline", "Circuit", "Tyres", "Weather", "Setup and run plan"])
     with t_base:
@@ -33,6 +39,7 @@ def render(con):
             telemetry.note_missing(a, b, la, lb)
             panel("Per-lap telemetry summary", "derived", source="fct_telemetry_lap_summary")
             ts = data.telemetry_lap_summary(con, base_sk)
+            ts = ts[ts["driver"].isin(pick.drivers(ctx, ts, "eng_pre_ts"))] if not ts.empty else ts
             c1, c2 = st.columns(2)
             plot.show(charts.lap_summary_fig(ts, "top_speed_kph", "Top speed (km/h)"), c1)
             plot.show(charts.lap_summary_fig(ts, "full_throttle_fraction", "Full-throttle fraction"), c2)
@@ -45,8 +52,9 @@ def render(con):
             panel("Detected corners", "estimated", source="dim_session_corners / fct_corner_performance",
                   note="Corners are DETECTED from telemetry (OpenF1 provides no corner definitions): numbers are not official turn numbers.")
             cn = data.corners(con, base_sk)
-            plot.show(charts.corner_fig(cn), st)
-            st.dataframe(cn, width="stretch", hide_index=True)
+            sel = pick.drivers(ctx, cn, "eng_pre_corner")
+            plot.show(charts.corner_fig(insights.field_median_corners(cn, sel)), st)
+            st.dataframe(cn[cn["driver"].isin(sel)] if not cn.empty else cn, width="stretch", hide_index=True)
     with t_tyres:
         panel("Tyre behaviour in earlier sessions", "estimated", source="fct_compound_pace_model",
               note="A straight-line fit of fuel-corrected lap time against tyre age. It cannot separate tyre wear from track evolution or traffic.")
@@ -54,7 +62,11 @@ def render(con):
         if cp is None or cp.empty:
             st.info("No fitted compound models in earlier sessions (needs enough clean laps per compound).")
         else:
-            st.dataframe(cp, width="stretch", hide_index=True)
+            only = st.checkbox("Only usable fits (8+ clean laps, pace within 107% of the session's best fit, slope within 1.5 s/lap)", value=True, key="eng_pre_usable")
+            shown = cp[insights.usable_pace_fits(cp)] if only else cp
+            if only:
+                st.caption(f"{len(cp) - len(shown)} of {len(cp)} fits hidden: practice and qualifying mix push, cool-down and in/out laps, which breaks a straight-line fit.")
+            st.dataframe(shown.drop(columns=["session_key"]), width="stretch", hide_index=True)
         header.not_available("Tyre temperatures, pressures, graining and blistering", "OpenF1 exposes tyre compound and age only, not per-wheel temperatures or pressures.")
     with t_weather:
         panel("Weather and track temperature", "measured", source="fct_weather_impact (per lap)")

@@ -730,3 +730,7 @@ make bq-emulator-test   # same project on BigQuery (emulator) compared table-by-
 * **Paths are parameterised** (`F1_RAW_DATA_PATH`, `F1_DUCKDB_PATH`, `F1_EXPORT_PATH`); the old `F:/...` values remain the defaults for the `dev` target.
 * `dbt build --profiles-dir . --target dev|container|ci|bigquery` (see `dbt_f1_transformations/profiles.yml`).
 * **Not verified**: Docker containers, dbt-inside-Airflow, real BigQuery/GCS/Composer, OpenTofu changes, real speech-to-text, and everything on your real data. The guide has the full table.
+
+
+
+https://betika.com/share/pgrHTq

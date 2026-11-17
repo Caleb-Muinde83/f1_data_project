@@ -9,7 +9,9 @@ renamed_and_casted AS (
         CAST(year AS {{ f1_type('int') }}) AS year,
         
         session_name,
-        session_type,
+        {# OpenF1 reports a Sprint with session_type 'Race' and only session_name 'Sprint'. Everything downstream (points scale, grid mapping, race-only
+           models) expects session_type 'Sprint', so normalise here. Without it sprints were scored on the Race points scale. #}
+        CASE WHEN session_name = 'Sprint' THEN 'Sprint' ELSE session_type END AS session_type,
         CAST(date_start AS {{ f1_type('timestamp') }}) AS date_start,
         CAST(date_end AS {{ f1_type('timestamp') }}) AS date_end,
         gmt_offset

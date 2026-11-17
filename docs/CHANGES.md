@@ -37,6 +37,81 @@ real browser (pages are tested headlessly with `streamlit.testing`).
 
 * **Real-data defect fixed:** in practice and qualifying OpenF1 reports every garage visit as a pit stop (12,462 + 5,706 rows with median pit-lane times of 340 s and 260 s, against 2,568 race stops at 23.5 s). They flooded `fct_pit_stops`, so circuit-level pit-loss medians (used by the strategy simulator) were meaningless. `fct_pit_stops` now keeps Race and Sprint stops only. New tests: `assert_pit_stops_only_in_races`, `assert_circuit_pit_loss_is_plausible`; the fixtures now include garage visits. `assert_pit_lane_time_plausible` remains a warn-level review of long race stops (red flags, stuck cars).
 
+* New opt-in variable `telemetry_only_sessions` (list of session keys) limits `fct_telemetry` and, through it, every telemetry mart to those sessions: `dbt build --select fct_telemetry+ --vars '{telemetry_only_sessions: [9158]}'`. Unset, behaviour is unchanged (all sessions with car data).
+
+## Fixes after the first look at REAL data (Shanghai 2026, screenshots)
+Data model (each has a new test that fails without the fix, and a fixture that reproduces the real-data failure):
+* `fct_telemetry`: a sample is credited to a lap only while that lap is running. Before, the as-of join had no upper bound, so cool-down laps and
+  garage time were attached to the previous lap (the final lap of a race held minutes of slow driving: broken overlays, 150 s delta traces,
+  93 km/h "top speeds"). **Existing telemetry tables must be rebuilt with `--full-refresh`** (the model is incremental and skips known sessions).
+* `fct_race_results`: starting-grid rows are matched directly OR through the session that set the grid (Qualifying for a Race, Sprint Qualifying/Shootout
+  for a Sprint). New column `grid_source`; new warn test `assert_race_results_have_grid`.
+* `int_lap_context`: cumulative race time falls back to lap-start differences when a lap has no duration, and is NULL for a retiring car's unfinished last
+  lap (SUM skipped it and froze his clock: 140 s spikes in the race trace at every retirement). Test: `assert_race_trace_leader_time_increases` (error in CI, warn on other targets: on the first real-data run it flagged 27 laps still to be explained and blocked fct_undercut_overcut).
+* `int_track_status_periods`: an SC/VSC with no closing message is capped (VSC 10 min, SC 20 min) instead of running to the session end (a "35-lap VSC").
+  New column `is_unclosed`; test `assert_neutralisation_periods_are_bounded`.
+Dashboard:
+* Unusable practice/qualifying tyre fits (164 s pace, -16 s/lap) are hidden by default (`insights.usable_pace_fits`); the simulator defaults to the earlier
+  session with the most usable compounds (usually the Sprint).
+* The stint projection uses a robust Theil-Sen fit on the last 12 clean laps, so slow restart laps no longer fake an "improvement".
+* Charts default to the focus and comparison drivers (picker) with a FIELD MEDIAN bar; incident tables show one row per event; the sector heatmap hides
+  drivers without a push lap and clips colours; pit markers are visible; empty-grid cases explain themselves; a DNF's missing position no longer crashes the
+  Data Scientist page. New "Data health" table on the Data coverage page.
+
+## Second real-data round (grid, sprints, race trace)
+* **Sprints were never typed 'Sprint'.** OpenF1 reports a Sprint with `session_type = 'Race'` and only `session_name = 'Sprint'`. So sprints were scored on the
+  Race points scale (25-18-15...), could not find their grid (the Race branch looks for a Qualifying session that runs AFTER a sprint), and were counted as races in
+  `dim_circuits`, the safety-car hazard and events. `stg_sessions` now normalises it. Tests: `assert_sprints_are_typed_sprint`, `assert_sprint_points_use_sprint_scale`.
+  Fixtures: session 9003 is now a Sprint exactly as OpenF1 reports it, with a Sprint Qualifying session (9004) that carries its grid.
+* **Cumulative race time is built from lap END timestamps** (next lap start, or start + duration for a final lap), relative to the first car to finish lap 1,
+  instead of a running SUM of durations. OpenF1 often has no lap-1 start/duration; SUM omitted that lap permanently, so the driver looked ~100 s ahead for the whole
+  race (27 laps flagged on real data, all lap 2). Fixture: driver 63 in 9003 has neither.
+* Grid evidence from real data: starting_grid rows are keyed to 'Qualifying' (1,484 rows) and 'Sprint Qualifying' (382 rows), never to the race itself.
+* Data-health check no longer crashes on a warehouse without any VSC (NA handling).
+
+* **A VSC upgraded to a Safety Car now ends when the SC starts.** Real 2024 Shanghai race-control log: VIRTUAL SAFETY CAR DEPLOYED 07:39:16, SAFETY CAR DEPLOYED 07:43:21,
+  SAFETY CAR IN THIS LAP 07:49:36, and no 'VIRTUAL SAFETY CAR ENDING' at all, so the VSC stream never closed (a '35-lap VSC'). `int_track_status_periods` now ends a period
+  at the start of a MORE SEVERE one (VSC < SC < RED); the 10-minute cap remains only for periods with neither a closing message nor a superseding one.
+  Test: `assert_neutralisation_periods_do_not_overlap` (error in CI, warn elsewhere). Fixture: a VSC -> SC -> 'in this lap' sequence in session 9003.
+
+## Third look at real data (dash1 screenshots, a crash, and a review)
+* **Crash fixed:** `session_laps` compared `NA == NA` for a session with no lap rows ("boolean value of NA is ambiguous"), and then the replay slider got min = max = 1. Replay pages now
+  say "No lap data for <session>" and stop; a one-lap session shows no slider. Regression tests for both.
+* **Drivers without laps (DNS):** the sidebar marks them "(no laps)" and every page banner warns when the focus or comparison driver has no laps, instead of showing blank KPIs.
+  (A review of the screenshots claimed the Engineer pages showed another driver's telemetry under the selected driver. They do not: the overlay legend names the driver shown, a caption says
+  the selected driver has no telemetry, and the comparison driver is visible in the sidebar. The missing piece was the explicit notice, now added.)
+* **Race events:** `data.race_events` puts neutralisations, penalties, pit stops, retirements and the fastest lap on one lap axis (timeline chart on the Analyst pages), and every replay page
+  has a 'Jump to event' control that moves the replay lap.
+* **Empty states explain themselves** (Data Scientist replay): laps seen, clean laps, distinct tyre ages and the minimum required.
+* **Simulator:** when a compound's degradation was clipped to 0 (negative fitted slope) the page says the ranking then reflects only pace and pit timing, not tyre wear.
+* `assert_neutralisation_periods_do_not_overlap` now looks at Race/Sprint sessions only (the FIA tests SC/VSC deployments in practice).
+* Test hygiene: an autouse fixture restores `f1_dash.data` after tests that monkeypatch it.
+
+## Fourth look at real data (2025 Shanghai, session 9998)
+* **Charts are never WebGL.** Plotly Express silently switches to `scattergl` above ~1000 rows (a 20-driver, 56-lap race is 1,120), and WebGL lines can fail to draw: the position
+  progression showed no lines and the race trace showed loose dots. `components/plot.show` converts every `scattergl` trace to SVG `scatter` (same data and style). Unit-tested on the
+  conversion; the rendering itself still needs a look in your browser.
+* **Simulator calibration only offers sessions the simulator can use** (two or more compounds with a fitted pace model; `simulator.viable` applies the same test as `render`). Earlier races
+  at the same circuit are now candidates (valid pre-race information) and the race distance defaults to the last race there. The page used to default to a session the simulator then rejected.
+* The championship chart on a post-race page stops at the selected race unless 'Show the rest of the season' is ticked.
+* Confirmed on real data: the overlap warning in session 9898 was Practice 2 at Baku (FIA SC/VSC tests); the narrowed test passes.
+
+## Fifth look at real data (2025 Shanghai simulator, 2026 penalties)
+* **A 'penalty served' notice is not a second penalty.** Real data: OCO showed two 10 s 'causing a collision' penalties (laps 37 and 51); lap 51 is 'FIA STEWARDS: PENALTY SERVED - 10 SECOND
+  TIME PENALTY FOR CAR 31 (OCO) - ...' (it is also why his second stop was 47 s). `fct_penalties` drops served notices and attaches their lap to the matching penalty as `served_lap`
+  (same session, driver and seconds); the events table says '(served lap N)'. Test: `assert_penalties_not_double_counted` (error in CI, warn elsewhere). Fixture: a penalty and its served notice.
+* **The simulator's race distance comes from the last race of the same kind.** It took the most recent earlier session at the circuit, which was the 19-lap Sprint, so every simulated
+  strategy was 19 laps long. A Race target now uses the last Race (a Sprint target, the last Sprint). Earlier races at the circuit are offered for calibration, Races first.
+* Confirmed on real data: the SVG change fixed the position-progression and race-trace lines; the simulator now offers '2024 Race at this circuit'.
+
+## Sixth look at real data (2026 Engineer pages, 2025 simulator)
+See `docs/ISSUES_CHECKLIST.md` for the full list and status of every issue. Changed this round, and only these files: `data.py`, `workspaces/engineer/pre_race.py`,
+`workspaces/scientist/pre_race.py`, `charts/predictions.py`, `theme.py` (plus tests and the checklist).
+* Engineer pre-race: the baseline defaults to a session that has telemetry, labels the ones that do not, and prints the exact `telemetry_only_sessions` build command.
+* Scientist pre-race: race distance = the classified leader's laps (`data.race_distance`), not the largest lap row (which counted laps after the flag: 58 for a 56-lap race).
+* Anomaly chart axis clipped at 12; KPI tiles scale with their column.
+* Not changed on purpose: corner defaults (the detector counts braking zones, not turns), the penalty test (18 groups awaiting a diagnostic), telemetry models (ALO's data awaiting a diagnostic).
+
 ## Not done (see the Data coverage page)
 Serving layer (FastAPI/WebSockets), splitting `int_lap_context`, ML models ML-02/06/07/12, SHAP/feature importance, drift monitoring,
 multi-driver field simulation, saved views and cross-role incident workspace.

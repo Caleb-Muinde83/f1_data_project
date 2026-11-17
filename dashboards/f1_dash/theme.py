@@ -23,7 +23,7 @@ h1, h2, h3 {{ letter-spacing: .01em; }}
 .f1-banner b {{ letter-spacing:.06em; }}
 .f1-kpi {{ background:{PANEL}; border:1px solid {EDGE}; border-radius:6px; padding:.6rem .9rem; }}
 .f1-kpi .l {{ color:{MUTED}; font-size:.72rem; text-transform:uppercase; letter-spacing:.08em; }}
-.f1-kpi .v {{ font-size:1.6rem; font-weight:700; line-height:1.2; }}
+.f1-kpi .v {{ font-size:clamp(1rem, 1.5vw + .35rem, 1.6rem); font-weight:700; line-height:1.2; }}
 .f1-kpi .s {{ color:{MUTED}; font-size:.75rem; }}
 .f1-tag {{ display:inline-block; padding:1px 8px; border-radius:10px; font-size:.68rem; font-weight:600; letter-spacing:.05em;
   text-transform:uppercase; border:1px solid currentColor; margin-right:.4rem; vertical-align:middle; }}

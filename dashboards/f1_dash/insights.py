@@ -32,8 +32,10 @@ def p_at_most(dist: pd.DataFrame, position: int) -> float:
     return float(dist.loc[dist["finish"] <= position, "probability"].sum()) if not dist.empty else float("nan")
 
 
-def fit_stint_degradation(laps: pd.DataFrame, driver_number: int, upto_lap: int, horizon: int = 10, min_points: int = 4):
-    """Linear lap-time-vs-tyre-age fit on the driver's CURRENT stint using only laps <= upto_lap (replay-safe).
+def fit_stint_degradation(laps: pd.DataFrame, driver_number: int, upto_lap: int, horizon: int = 10, min_points: int = 4, window: int = 12):
+    """ROBUST (Theil-Sen) lap-time-vs-tyre-age fit on the driver's CURRENT stint using only laps <= upto_lap (replay-safe) and at most the last
+    `window` clean laps. Theil-Sen takes the median of all pairwise slopes, so restart/warm-up laps after a safety car do not tilt the line the
+    way ordinary least squares does (real data: three slow restart laps turned a flat stint into a -0.07 s/lap 'improvement').
     Returns a dict for charts.degradation_projection_fig, or None when there are too few clean laps."""
     d = laps[(laps["driver_number"] == driver_number) & (laps["lap_number"] <= upto_lap)]
     if d.empty:
@@ -41,18 +43,23 @@ def fit_stint_degradation(laps: pd.DataFrame, driver_number: int, upto_lap: int,
     d = d[d["stint_number"] == d.sort_values("lap_number").iloc[-1]["stint_number"]]
     y = d["fuel_corrected_lap_time_seconds"].where(d["fuel_corrected_lap_time_seconds"].notna(), d["lap_time_seconds"])
     ok = d["is_representative_lap"] & y.notna() & d["tyre_age_this_lap"].notna()
-    d, y = d[ok], y[ok]
+    d, y = d[ok].assign(_y=y[ok]).sort_values("lap_number"), None
+    d = d.tail(window)
     if len(d) < min_points or d["tyre_age_this_lap"].nunique() < 2:
         return None
     x = d["tyre_age_this_lap"].astype(float).to_numpy()
-    slope, icpt = np.polyfit(x, y.to_numpy(), 1)
-    resid = y.to_numpy() - (icpt + slope * x)
-    sigma = float(resid.std(ddof=2)) if len(x) > 2 else float(resid.std())
+    yy = d["_y"].to_numpy(float)
+    slopes = [(yy[b] - yy[a]) / (x[b] - x[a]) for a in range(len(x)) for b in range(a + 1, len(x)) if x[b] != x[a]]
+    slope = float(np.median(slopes))
+    icpt = float(np.median(yy - slope * x))
+    resid = yy - (icpt + slope * x)
+    mad = float(np.median(np.abs(resid - np.median(resid))))
+    sigma = 1.4826 * mad if mad > 0 else float(resid.std())
     last_lap, last_age = int(d["lap_number"].max()), float(x[d["lap_number"].to_numpy().argmax()])
     ks = np.arange(0, horizon + 1)
     proj = icpt + slope * (last_age + ks)
-    return {"lap": list(d["lap_number"]), "actual": list(y), "proj_lap": list(last_lap + ks), "proj": list(proj),
-            "lo": list(proj - 1.645 * sigma), "hi": list(proj + 1.645 * sigma), "slope": float(slope), "intercept": float(icpt),
+    return {"lap": list(d["lap_number"]), "actual": list(yy), "proj_lap": list(last_lap + ks), "proj": list(proj),
+            "lo": list(proj - 1.645 * sigma), "hi": list(proj + 1.645 * sigma), "slope": slope, "intercept": icpt,
             "sigma": sigma, "n": int(len(x)), "compound": str(d["tyre_compound"].iloc[-1]), "last_lap": last_lap}
 
 
@@ -120,3 +127,47 @@ def engineering_alerts(laps: pd.DataFrame, penalties: pd.DataFrame, radio: pd.Da
         for r in mine.itertuples():
             out.append(("warn", int(r.lap_number or 0), f"Lap {r.lap_number}: radio mentions the power unit (keyword match on a transcript)"))
     return sorted(out, key=lambda t: t[1])
+
+
+def usable_pace_fits(df: pd.DataFrame, min_laps: int = 8, max_abs_degradation: float = 1.5, pace_ratio: float = 1.07) -> pd.Series:
+    """Which rows of fct_compound_pace_model are worth showing. Practice/qualifying fits are often junk (real data: 164 s 'fresh pace' on a 95 s
+    circuit, -16 s/lap 'degradation') because push, cool-down and in/out laps are mixed. A fit is usable when it has enough clean laps, a pace within
+    `pace_ratio` of the best fit of the SAME session, and a plausible slope. r_squared is deliberately not required: a flat, valid stint has r2 near 0."""
+    if df is None or df.empty:
+        return pd.Series(dtype=bool)
+    enough = df["clean_laps"] >= min_laps
+    group = df["session_name"] if "session_name" in df else pd.Series("all", index=df.index)
+    best = df["fresh_tyre_pace_seconds"].where(enough).groupby(group).transform("min")
+    return enough & (df["fresh_tyre_pace_seconds"] <= pace_ratio * best) & (df["degradation_seconds_per_lap"].abs() <= max_abs_degradation)
+
+
+def best_calibration_session(df: pd.DataFrame):
+    """The earlier session that gives the simulator the most compounds with usable fits (ties: more usable rows, then the latest)."""
+    if df is None or df.empty or "session_key" not in df:
+        return None
+    ok = df[usable_pace_fits(df)]
+    if ok.empty:
+        return None
+    g = ok.groupby("session_key").agg(compounds=("tyre_compound", "nunique"), rows=("tyre_compound", "size")).reset_index()
+    return int(g.sort_values(["compounds", "rows", "session_key"]).iloc[-1]["session_key"])
+
+
+def field_median_corners(corners: pd.DataFrame, drivers) -> pd.DataFrame:
+    """Chosen drivers plus a FIELD MEDIAN row per corner, so 20 bars per corner become a readable comparison."""
+    if corners is None or corners.empty or "driver" not in corners:
+        return corners
+    med = corners.groupby("corner_number", as_index=False).agg(avg_apex_kph=("avg_apex_kph", "median"))
+    med["driver"] = "FIELD MEDIAN"
+    return pd.concat([corners[corners["driver"].isin(drivers)][["corner_number", "driver", "avg_apex_kph"]], med], ignore_index=True)
+
+
+def fit_diagnostics(laps: pd.DataFrame, driver_number: int, upto_lap: int, min_points: int = 4) -> str:
+    """Why a stint projection / anomaly screen has nothing to show: counts available vs required."""
+    d = laps[(laps["driver_number"] == driver_number) & (laps["lap_number"] <= upto_lap)]
+    if d.empty:
+        return f"This driver has no laps up to lap {upto_lap} (did not start, or has not started yet in the replay)."
+    cur = d[d["stint_number"] == d.sort_values("lap_number").iloc[-1]["stint_number"]]
+    clean = cur[cur["is_representative_lap"].fillna(False) & cur["tyre_age_this_lap"].notna()]
+    return (f"{len(d)} laps so far; the current stint (stint {int(cur['stint_number'].iloc[0])}, {cur['tyre_compound'].iloc[-1]}) has {len(cur)} laps, of which "
+            f"{len(clean)} are clean (green-flag, not in/out, within the pace threshold) and {clean['tyre_age_this_lap'].nunique()} distinct tyre ages. "
+            f"A fit needs at least {min_points} clean laps with 2+ distinct tyre ages.")

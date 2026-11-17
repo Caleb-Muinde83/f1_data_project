@@ -21,9 +21,11 @@ def render(con):
         win = res.iloc[0]
         best = res.loc[res["gained"].idxmax()] if res["gained"].notna().any() else None
         kpis.kpi_row([("Winner", win.driver, win.team), ("Fastest lap", f"{fl.iloc[0].driver} {kpis.fmt_lap(fl.iloc[0].fastest_lap_time_seconds)}" if not fl.empty else "-", "session best"),
-                      ("Biggest mover", f"{best.driver} {int(best.gained):+d}" if best is not None else "-", "grid to finish"), ("Classified", str(int((res.status.isin(['Finished', 'Lapped'])).sum())), f"of {len(res)}")])
+                      ("Biggest mover", f"{best.driver} {int(best.gained):+d}" if best is not None else "n/a", "grid to finish" if best is not None else "no grid data"), ("Classified", str(int((res.status.isin(['Finished', 'Lapped'])).sum())), f"of {len(res)}")])
     panel("Classification", "measured", source="fct_race_results")
-    st.dataframe(res.dropna(axis=1, how="all"), width="stretch", hide_index=True)     # a race has no Q1-Q3 times
+    if res["grid"].isna().all():
+        st.warning("Grid positions are missing for this race, so 'grid' and 'gained' are empty (see Data coverage > Data health).")
+    st.dataframe(res.drop(columns=[c for c in ("q1_seconds", "q2_seconds", "q3_seconds") if res[c].isna().all()]), width="stretch", hide_index=True)
     st.download_button("Export classification (CSV)", res.to_csv(index=False), file_name=f"classification_{sk}.csv", mime="text/csv")
 
     t1, t2, t3, t4 = st.tabs(["Positions and pace", "Tyres and strategy", "Overtaking and events", "Championship"])
@@ -48,20 +50,27 @@ def render(con):
         plot.show(charts.stint_gantt_fig(stints, ps), st)
         panel("Degradation per stint", "estimated", note="Regression slope on clean laps; includes fuel, track evolution and traffic.")
         plot.show(charts.degradation_fig(stints), st)
-        panel("Pit stops", "measured", note="Pit-lane time is not stationary time; slow stops are flagged relative to the session median.")
+        panel("Pit stops", "measured", note="Pit-lane time is not stationary time. time_lost_seconds is only meaningful for green-flag stops: under a safety car the in/out laps are slow for everyone (check is_under_neutralisation).")
         plot.show(charts.pit_duration_fig(ps), st)
         st.dataframe(ps, width="stretch", hide_index=True)
         panel("Undercut / overcut contests", "estimated", source="fct_undercut_overcut")
         uc = data.undercuts(con, sk)
         st.dataframe(uc, width="stretch", hide_index=True) if not uc.empty else st.caption("No related pit-stop pairs with the attacker directly behind the defender.")
     with t3:
+        panel("Race events", "measured", note="Neutralisations, penalties, pit stops, retirements and the fastest lap on one lap axis.")
+        ev = data.race_events(con, sk)
+        plot.show(charts.event_timeline_fig(ev), st)
+        st.dataframe(ev, width="stretch", hide_index=True)
         panel("Overtakes", "estimated", source="fct_overtakes", note="'drs_range_proxy' is a gap heuristic, not actual DRS activation.")
         st.dataframe(data.overtakes(con, sk), width="stretch", hide_index=True)
         panel("Neutralisations, penalties and incidents", "measured")
         st.dataframe(data.neutralisations(con, sk), width="stretch", hide_index=True)
         st.dataframe(data.penalties(con, sk), width="stretch", hide_index=True)
-        st.dataframe(data.lap_incidents(con, sk), width="stretch", hide_index=True)
+        st.dataframe(data.incident_summary(con, sk), width="stretch", hide_index=True)
     with t4:
         panel(f"{ctx.year} points progression", "derived", source="fct_points_progression", note="Computed from results with the season-aware scoring seed.")
-        plot.show(charts.points_fig(data.points_progression(con, ctx.year)), st)
+        prog = data.points_progression(con, ctx.year)
+        if not st.checkbox("Show the rest of the season", value=False, key="ana_post_season"):
+            prog = prog[prog["session_start_time"] <= ctx.start_time]
+        plot.show(charts.points_fig(prog), st)
         st.dataframe(data.constructor_standings(con, sk), width="stretch", hide_index=True)

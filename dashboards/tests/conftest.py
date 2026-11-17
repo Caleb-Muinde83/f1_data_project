@@ -12,3 +12,16 @@ def warehouse_path():
     if not p or not pathlib.Path(p).exists():
         pytest.skip("set F1_DUCKDB_PATH to a warehouse built from the synthetic fixtures")
     return p
+
+
+import pytest
+
+
+@pytest.fixture(autouse=True)
+def _restore_data_module():
+    """Tests monkeypatch f1_dash.data inside Streamlit scripts (missing telemetry, missing laps). Restore the module so later tests see the real functions."""
+    from f1_dash import data
+    saved = dict(vars(data))
+    yield
+    vars(data).clear()
+    vars(data).update(saved)

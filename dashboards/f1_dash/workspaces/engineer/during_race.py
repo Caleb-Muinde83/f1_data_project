@@ -1,9 +1,10 @@
 """Race Engineer / During race (REPLAY): what is the car doing? Reads historical data lap by lap."""
+import pandas as pd
 import streamlit as st
 from ... import charts, data, insights
 from ...components import plot, header, kpis, race_timeline
 from ...provenance import panel
-from .._common import need_context, need_race
+from .._common import need_context, need_laps, need_race
 
 
 def render(con):
@@ -15,7 +16,9 @@ def render(con):
     if not need_race(ctx, "The race replay"):
         return
     total = data.session_laps(con, ctx.session_key)
-    lap = race_timeline.replay_controls(total, key="eng_dur_lap")
+    if not need_laps(total, ctx.session_name):
+        return
+    lap = race_timeline.replay_controls(total, key="eng_dur_lap", events=data.race_events(con, ctx.session_key))
     laps = data.lap_table(con, ctx.session_key)
     me = laps[(laps.driver_number == ctx.driver) & (laps.lap_number == lap)]
     ts = data.telemetry_lap_summary(con, ctx.session_key)
@@ -23,8 +26,8 @@ def render(con):
     r = me.iloc[0] if not me.empty else None
     kpis.kpi_row([
         ("Driver", ctx.acronym(ctx.driver), f"lap {lap}/{total}"),
-        ("Last lap", kpis.fmt_lap(r.lap_time_seconds) if r is not None else "-", f"P{int(r.position_end)}" if r is not None and r.position_end == r.position_end else ""),
-        ("Tyre", f"{r.tyre_compound} / {int(r.tyre_age_this_lap)} laps" if r is not None and r.tyre_age_this_lap == r.tyre_age_this_lap else "-", "compound / age"),
+        ("Last lap", kpis.fmt_lap(r.lap_time_seconds) if r is not None else "-", f"P{int(r.position_end)}" if r is not None and pd.notna(r.position_end) else ""),
+        ("Tyre", f"{r.tyre_compound} / {int(r.tyre_age_this_lap)} laps" if r is not None and pd.notna(r.tyre_age_this_lap) else "-", "compound / age"),
         ("Track status", (r.track_status if r is not None else "-") or "-", "from race control"),
         ("Top speed", f"{t_me.iloc[0].top_speed_kph:.0f} km/h" if not t_me.empty else "-", "this lap, telemetry")])
 
@@ -50,6 +53,6 @@ def render(con):
             st.dataframe(mine[["lap_number", "driver_name", "transcript"]].tail(8), width="stretch", hide_index=True)
 
     panel("Track status and incidents so far", "measured", source="fct_lap_incidents")
-    inc = data.lap_incidents(con, ctx.session_key)
+    inc = data.incident_summary(con, ctx.session_key)
     st.dataframe(inc[inc.lap_number <= lap], width="stretch", hide_index=True)
     header.not_available("Live car health (engine, oil, brake, hydraulic, battery) and per-wheel tyre temperatures", "Not published by OpenF1. These panels need a team telemetry feed.")

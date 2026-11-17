@@ -37,6 +37,10 @@ def render(con):
     st.caption(f"File: {data.CURRENT_DB}" + ("  (SYNTHETIC CI fixtures)" if data.is_fixture_warehouse(con) else ""))
     cov = data.data_coverage(con)
     st.dataframe(cov, width="stretch", hide_index=True)
+    st.markdown("### Data health")
+    health = data.health_checks(con)
+    st.dataframe(health, width="stretch", hide_index=True)
+    st.caption("status warn = look at this before trusting the dashboards that depend on it.")
     st.markdown("### Not in this dataset")
     for t, why in [("Live streaming", "The dashboards read a DuckDB warehouse. Replay pages are historical; nothing here is a live feed."),
                    ("Car setup, sensors, tyre temperatures and pressures", "Not published by OpenF1."),

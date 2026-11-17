@@ -1,3 +1,4 @@
+from collections.abc import Sequence
 import json
 import logging
 import os
@@ -15,6 +16,7 @@ from airflow.utils.task_group import TaskGroup
 from modules.universal_extractor import extract_and_save_endpoint
 from modules.pipeline_utils import build_manifest, notify_failure
 from hooks.openf1_hook import OpenF1Hook
+from slack_alerts import send_slack_failure_alert
 
 # ==========================================
 # DBT LOCATIONS (inside the Airflow container; see docker-compose.yaml for the mounts)
@@ -35,7 +37,7 @@ default_args = {
     "retry_exponential_backoff": True,      # 3 min, 6 min, ... so a rate-limited API gets time to recover
     "max_retry_delay": timedelta(minutes=30),
     "execution_timeout": timedelta(hours=3),  # a hung HTTP call must not hold a pool slot forever
-    "on_failure_callback": notify_failure,    # structured log line + optional webhook (ALERT_WEBHOOK_URL)
+    "on_failure_callback": send_slack_failure_alert,    # structured log line + optional webhook (ALERT_WEBHOOK_URL)
 }
 
 # ==========================================
@@ -204,7 +206,7 @@ with DAG(
         flat_results = []
         for task_group_results in [event_results, telemetry_results, results_out]:
             for item in task_group_results:
-                if isinstance(item, list):
+                if isinstance(item, Sequence) and not isinstance(item, (str, bytes)):
                     flat_results.extend(item)
                 else:
                     flat_results.append(item)

@@ -25,11 +25,11 @@ def render(con):
         for r in grid.itertuples():
             dist = insights.grid_baseline(hist, int(r.grid), 1)
             act = res.loc[res.driver == r.driver, "pos"]
-            if not dist.empty and not act.empty and act.iloc[0] == act.iloc[0]:
+            if not dist.empty and not act.empty and pd.notna(act.iloc[0]):
                 rows.append({"driver": r.driver, "predicted": insights.expected_finish(dist), "actual": float(act.iloc[0]), "n": int(dist.n.iloc[0])})
         ev = pd.DataFrame(rows)
         if ev.empty:
-            st.info("No earlier races to train the baseline on, so there is nothing to evaluate yet.")
+            st.info("No earlier races with grid positions to train the baseline on, so there is nothing to evaluate yet (see Data coverage > Data health).")
         else:
             m = insights.error_metrics(ev.actual, ev.predicted)
             kpis.kpi_row([("MAE", f"{m['mae']:.2f}", "places"), ("RMSE", f"{m['rmse']:.2f}", "places"), ("Bias", f"{m['bias']:+.2f}", "actual - predicted"), ("Drivers", str(m["n"]), "evaluated")])

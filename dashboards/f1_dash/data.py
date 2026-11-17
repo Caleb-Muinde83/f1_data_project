@@ -145,7 +145,7 @@ def session_row(con, session_key: int):
 
 def session_laps(con, session_key: int) -> int:
     df = q(con, "SELECT MAX(lap_number) AS n FROM fct_lap_performance WHERE session_key = ?", [session_key])
-    return int(df.iloc[0, 0]) if not df.empty and df.iloc[0, 0] == df.iloc[0, 0] and df.iloc[0, 0] is not None else 0
+    return int(df.iloc[0, 0]) if not df.empty and pd.notna(df.iloc[0, 0]) else 0       # a session with no laps gives NA, not 0
 
 
 def session_has(con, table: str, session_key: int) -> bool:
@@ -198,7 +198,7 @@ def compound_pace(con, session_keys):
     if not len(session_keys):
         return pd.DataFrame()
     ph = ",".join("?" * len(session_keys))
-    return q(con, f"""SELECT s.session_name, d.driver_acronym AS driver, c.tyre_compound, c.clean_laps, c.fresh_tyre_pace_seconds,
+    return q(con, f"""SELECT c.session_key, s.session_name, d.driver_acronym AS driver, c.tyre_compound, c.clean_laps, c.fresh_tyre_pace_seconds,
         c.degradation_seconds_per_lap, c.r_squared, c.min_tyre_age, c.max_tyre_age
         FROM fct_compound_pace_model c JOIN dim_sessions s USING (session_key)
         LEFT JOIN dim_driver_session d USING (session_key, driver_number)
@@ -271,7 +271,7 @@ def overtakes(con, session_key: int):
 
 
 def penalties(con, session_key: int):
-    return q(con, """SELECT p.lap_number, d.driver_acronym AS driver, p.penalty_type, p.penalty_seconds, p.reason
+    return q(con, """SELECT p.lap_number, d.driver_acronym AS driver, p.penalty_type, p.penalty_seconds, p.reason, p.served_lap
         FROM fct_penalties p LEFT JOIN dim_driver_session d USING (session_key, driver_number)
         WHERE p.session_key = ? ORDER BY p.lap_number""", [session_key])
 
@@ -339,4 +339,94 @@ def is_fixture_warehouse(con) -> bool:
     if "ci.duckdb" in name or ".ci_raw" in name:
         return True
     keys = set(q(con, "SELECT session_key FROM dim_sessions")["session_key"])
-    return bool(keys) and keys <= {9001, 9002, 9003}
+    return bool(keys) and keys <= {9001, 9002, 9003, 9004}
+
+
+def incident_summary(con, session_key: int):
+    """One row per lap and kind of incident (not one per driver per lap): a yellow flag over the whole field is one event."""
+    return q(con, """SELECT lap_number, neutralisation_status, primary_flag, incident_categories,
+        MAX(race_control_message_count) AS messages, COUNT(*) AS cars_affected
+        FROM fct_lap_incidents WHERE session_key = ? AND is_affected_by_incident
+        GROUP BY lap_number, neutralisation_status, primary_flag, incident_categories ORDER BY lap_number, primary_flag""", [session_key])
+
+
+def health_checks(con):
+    """Data-health table: things that were wrong on real data and that a pipeline run should keep visible."""
+    def one(sql):
+        try:
+            v = q(con, sql).iloc[0, 0]
+            return None if pd.isna(v) else v          # an empty aggregate (for example no VSC at all) is None, not pd.NA
+        except Exception:
+            return None
+    rows = []
+    races = one("SELECT COUNT(DISTINCT session_key) FROM fct_race_results WHERE session_type IN ('Race','Sprint')")
+    with_grid = one("SELECT COUNT(*) FROM (SELECT session_key FROM fct_race_results WHERE session_type IN ('Race','Sprint') GROUP BY 1 HAVING COUNT(grid_position) > 0) t")
+    rows.append(("Races/sprints with starting-grid positions", f"{with_grid} of {races}", None if races is None else ("ok" if with_grid == races else "warn"),
+                 "Without them: no positions gained/lost and no grid-vs-finish baseline. Check the starting_grid extract and its session_key."))
+    tel = one("SELECT COUNT(DISTINCT t.session_key) FROM fct_telemetry_lap_summary t JOIN dim_sessions s USING (session_key) WHERE s.session_type IN ('Race','Sprint')")
+    rows.append(("Races/sprints with telemetry", f"{tel} of {races}", "ok" if tel and tel == races else "info",
+                 "Telemetry is large and loaded per session; build more with telemetry_only_sessions."))
+    vsc = one("SELECT MAX(duration_laps) FROM fct_safety_car_events WHERE track_status = 'VSC'")
+    sc = one("SELECT MAX(duration_laps) FROM fct_safety_car_events WHERE track_status = 'SC'")
+    rows.append(("Longest VSC / SC period (laps)", f"{vsc} / {sc}", None if vsc is None and sc is None else ("warn" if (vsc or 0) > 12 or (sc or 0) > 20 else "ok"),
+                 "A VSC far longer than ~12 laps means a closing message was missed and nothing superseded it; unclosed periods are capped."))
+    pit = one("SELECT ROUND(MEDIAN(pit_lane_time_seconds), 1) FROM fct_pit_stops")
+    rows.append(("Median pit-lane time, race stops (s)", str(pit), None if pit is None else ("ok" if 15 <= pit <= 40 else "warn"),
+                 "Practice/qualifying garage visits are excluded; a value outside 15-40 s points at a units or data problem."))
+    nulls = one("""SELECT ROUND(100.0 * AVG(CASE WHEN l.lap_time_seconds IS NULL THEN 1 ELSE 0 END), 1) FROM fct_lap_performance l
+                   JOIN dim_sessions s USING (session_key) WHERE s.session_type IN ('Race','Sprint')""")
+    rows.append(("Race laps without a lap time (%)", str(nulls), None if nulls is None else ("ok" if nulls < 5 else "warn"),
+                 "Mostly retiring cars' last laps. Cumulative race time falls back to lap-start differences."))
+    return pd.DataFrame(rows, columns=["check", "result", "status", "why it matters"])
+
+
+def drivers_with_laps(con, session_key: int):
+    """Driver numbers that have at least one lap row in the session (a DNS driver has none)."""
+    return set(q(con, "SELECT DISTINCT driver_number FROM fct_lap_performance WHERE session_key = ?", [session_key])["driver_number"])
+
+
+def race_events(con, session_key: int):
+    """One table of everything that happened, by lap: neutralisations, penalties, pit stops, retirements and the fastest lap."""
+    parts = []
+    nz = neutralisations(con, session_key)
+    if not nz.empty:
+        parts.append(pd.DataFrame({"lap": nz["start_lap"], "kind": "Neutralisation", "driver": None,
+                                   "detail": nz["track_status"] + " for " + nz["duration_laps"].astype(str) + " laps (" + nz["start_lap"].astype(str) + "-" + nz["end_lap"].astype(str) + ")"}))
+    pn = penalties(con, session_key)
+    if not pn.empty:
+        parts.append(pd.DataFrame({"lap": pn["lap_number"], "kind": "Penalty", "driver": pn["driver"],
+                                   "detail": pn["penalty_type"].astype(str) + " " + pn["penalty_seconds"].astype(str) + "s: " + pn["reason"].astype(str)
+                                             + pn["served_lap"].map(lambda v: "" if pd.isna(v) else f" (served lap {int(v)})")}))
+    ps = pit_stops(con, session_key)
+    if not ps.empty:
+        under = ps["is_under_neutralisation"].fillna(False).map({True: " (under neutralisation)", False: ""})
+        parts.append(pd.DataFrame({"lap": ps["lap_number"], "kind": "Pit stop", "driver": ps["driver"],
+                                   "detail": ps["compound_before"].astype(str) + " > " + ps["compound_after"].astype(str) + ", pit lane " + ps["pit_lane_time_seconds"].round(1).astype(str) + "s" + under}))
+    rs = results(con, session_key)
+    if not rs.empty:
+        dnf = rs[rs["status"].isin(["DNF", "DSQ"]) & (rs["laps"] > 0)]
+        if not dnf.empty:
+            parts.append(pd.DataFrame({"lap": dnf["laps"] + 1, "kind": "Retirement", "driver": dnf["driver"], "detail": dnf["status"] + " after " + dnf["laps"].astype(str) + " laps"}))
+    fl = fastest_laps(con, session_key)
+    if not fl.empty:
+        top = fl.iloc[0]
+        parts.append(pd.DataFrame({"lap": [top["lap_number"]], "kind": "Fastest lap", "driver": [top["driver"]], "detail": [f"{top['fastest_lap_time_seconds']:.3f}s"]}))
+    if not parts:
+        return pd.DataFrame(columns=["lap", "kind", "driver", "detail"])
+    ev = pd.concat(parts, ignore_index=True).dropna(subset=["lap"])
+    ev["lap"] = ev["lap"].astype(int)
+    return ev.sort_values(["lap", "kind"]).reset_index(drop=True)
+
+
+def sessions_with_telemetry(con):
+    """Session keys that have per-lap telemetry built (telemetry is large and is built per session with telemetry_only_sessions)."""
+    return set(q(con, "SELECT DISTINCT session_key FROM fct_telemetry_lap_summary")["session_key"])
+
+
+def race_distance(con, session_key: int) -> int:
+    """Race distance in laps = laps completed by the classified leader. NOT MAX(lap_number) of the lap table: that also counts rows recorded after the
+    flag (cool-down laps), which made a 56-lap race look like 58. Falls back to the lap table when there is no classification."""
+    df = q(con, "SELECT MAX(laps_completed) FROM fct_race_results WHERE session_key = ? AND classification_status IN ('Finished', 'Lapped')", [session_key])
+    if not df.empty and pd.notna(df.iloc[0, 0]) and int(df.iloc[0, 0]) > 0:
+        return int(df.iloc[0, 0])
+    return session_laps(con, session_key)

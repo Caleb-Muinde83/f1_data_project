@@ -103,3 +103,96 @@ def test_timing_tower_from_cumulative_order_never_repeats_a_position():
     order = pd.DataFrame({"lap_number": 5, "driver_number": [1, 2], "position": [1, 2], "gap_to_leader": [0.0, 1.5], "interval": [None, 1.5]})
     t = timing.tower(laps, 5, order=order)
     assert list(t["Pos"]) == [1, 2] and list(t["Driver"]) == ["A", "B"]
+
+
+def test_stint_fit_is_not_tilted_by_slow_restart_laps():
+    """Real data (Shanghai 2026): three slow laps after a safety-car restart turned a flat stint into a -0.07 s/lap 'improvement' under least squares."""
+    ages = np.arange(1, 14)
+    y = np.r_[99.1, 97.5, 96.1, np.full(10, 95.4) + 0.005 * np.arange(10)]
+    laps = pd.DataFrame({"driver_number": 63, "lap_number": ages + 13, "stint_number": 2, "tyre_compound": "HARD", "tyre_age_this_lap": ages,
+                         "is_representative_lap": True, "fuel_corrected_lap_time_seconds": y, "lap_time_seconds": y})
+    ols = np.polyfit(ages, y, 1)[0]
+    fit = insights.fit_stint_degradation(laps, 63, upto_lap=99)
+    assert ols < -0.15 and abs(fit["slope"]) < 0.03       # least squares is badly tilted, the robust fit is not
+    assert fit["sigma"] < 0.2 and fit["n"] <= 12
+
+
+def _pace_rows():
+    # numbers taken from the real Shanghai practice/qualifying/sprint tables
+    rows = [("Practice 1", "RUS", "MEDIUM", 9, 93.6014, 0.6186), ("Practice 1", "ALB", "MEDIUM", 5, 96.3535, 0.8266), ("Practice 1", "BOR", "MEDIUM", 6, 114.5447, -2.2635),
+            ("Sprint Qualifying", "COL", "MEDIUM", 6, 164.7368, -16.7485), ("Sprint", "ALO", "HARD", 14, 99.3811, 0.0088), ("Sprint", "BOR", "MEDIUM", 14, 98.5845, 0.0233),
+            ("Qualifying", "LIN", "SOFT", 5, 109.9368, 0.4788)]
+    return pd.DataFrame(rows, columns=["session_name", "driver", "tyre_compound", "clean_laps", "fresh_tyre_pace_seconds", "degradation_seconds_per_lap"]).assign(
+        session_key=lambda d: d.session_name.map({"Practice 1": 1, "Sprint Qualifying": 2, "Sprint": 3, "Qualifying": 4}), r_squared=0.01)
+
+
+def test_usable_pace_fits_drops_the_junk_but_keeps_flat_valid_stints():
+    df = _pace_rows()
+    ok = df[insights.usable_pace_fits(df)]
+    assert set(ok.driver + ok.session_name) == {"RUSPractice 1", "ALOSprint", "BORSprint"}      # junk (164 s, 114 s, <8 laps) is gone; r2 ~ 0 does not matter
+    assert insights.best_calibration_session(df) == 3                                               # the Sprint has two compounds with usable fits
+
+
+def test_sector_heatmap_hides_drivers_without_a_push_lap_and_clips_the_scale():
+    rows = []
+    for drv, lap, s in (("A", 92.0, (28.0, 33.0, 31.0)), ("B", 92.5, (28.2, 33.1, 31.2)), ("C", 99.0, (30.0, 36.0, 45.0))):   # C never pushed (107%+)
+        rows.append({"driver": drv, "is_representative_lap": True, "lap_time_seconds": lap, "s1": s[0], "s2": s[1], "s3": s[2]})
+    fig = charts.sector_heatmap_fig(pd.DataFrame(rows))
+    hm = fig.data[0]
+    assert list(hm.y) == ["A", "B"] and hm.zmax == 1.5
+
+
+def test_field_median_corners_gives_chosen_drivers_plus_one_median_bar_per_corner():
+    cn = pd.DataFrame({"corner_number": [1, 1, 1, 2, 2, 2], "driver": ["A", "B", "C"] * 2, "avg_apex_kph": [90.0, 100.0, 110.0, 120.0, 130.0, 140.0]})
+    out = insights.field_median_corners(cn, ["A"])
+    assert sorted(out.driver.unique()) == ["A", "FIELD MEDIAN"] and out[out.driver == "FIELD MEDIAN"].avg_apex_kph.tolist() == [100.0, 130.0]
+
+
+def test_pit_markers_are_visible_on_light_compounds():
+    st_ = pd.DataFrame({"driver": ["A"], "stint_number": [1], "tyre_compound": ["HARD"], "first_lap": [1], "last_lap": [20]})
+    fig = charts.stint_gantt_fig(st_, pd.DataFrame({"driver": ["A"], "lap_number": [10]}))
+    assert fig.data[-1].marker.color != "#fff"
+
+
+def test_fit_diagnostics_explain_why_there_is_nothing_to_fit():
+    laps = pd.DataFrame({"driver_number": 63, "lap_number": [1, 2, 3], "stint_number": 1, "tyre_compound": "HARD", "tyre_age_this_lap": [1, 2, 3],
+                         "is_representative_lap": [False, True, True]})
+    assert "no laps" in insights.fit_diagnostics(laps, 99, 10)
+    msg = insights.fit_diagnostics(laps, 63, 3)
+    assert "3 laps so far" in msg and "2 are clean" in msg and "at least 4" in msg
+
+
+def test_simulator_names_compounds_whose_degradation_was_clipped():
+    from f1_dash.components import simulator      # the strings below are the ones the real Shanghai run produced
+    prov = {"MEDIUM.degradation": "clipped from -0.0222 to 0 (negative slope = noise or track evolution)", "HARD.degradation": "clipped from -0.0115 to 0 (negative slope)",
+            "SOFT.degradation": "measured", "pit_loss": "measured: circuit median"}
+    assert simulator.clipped_compounds(prov) == ["HARD", "MEDIUM"] and simulator.clipped_compounds({}) == []
+
+
+def test_event_timeline_handles_events_and_none():
+    ev = pd.DataFrame({"lap": [10, 12], "kind": ["Neutralisation", "Pit stop"], "driver": [None, "ALO"], "detail": ["SC for 4 laps", "MEDIUM > HARD"]})
+    assert len(charts.event_timeline_fig(ev, 11).data) >= 1 and len(charts.event_timeline_fig(pd.DataFrame()).layout.annotations) == 1
+
+
+def test_big_line_charts_are_rendered_as_svg_not_webgl():
+    """Plotly Express switches to WebGL above ~1000 rows; WebGL lines failed to draw (position progression empty, race trace as loose dots)."""
+    import plotly.express as px
+    from f1_dash.components import plot
+    n = 20 * 56
+    df = pd.DataFrame({"lap_number": np.tile(np.arange(1, 57), 20), "position": np.tile(np.arange(1, 21), 56), "driver": np.repeat([f"D{i}" for i in range(20)], 56)})
+    fig = px.line(df, x="lap_number", y="position", color="driver")
+    assert len(df) > 1000 and fig.data[0].type == "scattergl"          # what the charts produced before
+    svg = plot.to_svg(fig)
+    assert {t.type for t in svg.data} == {"scatter"} and len(svg.data) == 20
+    a, b = svg.to_dict()["data"][0], fig.to_dict()["data"][0]
+    assert a["x"] == b["x"] and a["y"] == b["y"] and a["mode"] == b["mode"] == "lines" and a["name"] == b["name"]     # same data, same style, only the trace type changes
+    small = px.line(df.head(50), x="lap_number", y="position", color="driver")
+    assert plot.to_svg(small) is small                                  # untouched when nothing needs converting
+
+
+def test_a_five_minute_retirement_lap_does_not_flatten_the_anomaly_chart():
+    """Real 2026 Shanghai: VER's retirement lap scored z = 60 and squashed every other lap against the axis."""
+    df = pd.DataFrame({"lap_number": [1, 2, 3, 4], "z": [0.2, -0.4, 1.0, 60.0], "is_anomaly": [False, False, False, True]})
+    fig = charts.anomaly_fig(df)
+    ys = [float(v) for t in fig.data for v in t.y]
+    assert max(ys) <= 12 and 60.0 in [float(c[0]) for t in fig.data for c in t.customdata]     # drawn clipped, hover keeps the true score

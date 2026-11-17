@@ -31,13 +31,14 @@ DRIVERS = {1: ("Max Verstappen", "VER", "Red Bull Racing"), 11: ("Sergio Perez",
 SESSIONS = [  # key, meeting, type, name, start
     (9001, 1001, "Qualifying", "Qualifying", datetime(2024, 3, 1, 15, 0, tzinfo=UTC)),
     (9002, 1001, "Race", "Race", datetime(2024, 3, 2, 15, 0, tzinfo=UTC)),
-    (9003, 1002, "Race", "Race", datetime(2024, 3, 9, 15, 0, tzinfo=UTC)),
+    (9003, 1002, "Race", "Sprint", datetime(2024, 3, 9, 15, 0, tzinfo=UTC)),   # a Sprint: OpenF1 type "Race", name "Sprint"
 ]
 NLAPS, SC_LAPS = 12, (7, 8)
 # Pit laps in race sessions: 1 and 63 stop first (lap 4), 44 stops lap 5 with a quicker stop, 11 stays out until lap 9.
 # This yields an undercut (63 on 44), an overcut (11 on 1) and a slower-stop case.
 PIT_LAPS = {1: 4, 63: 4, 44: 5, 11: 9}
 OUTLAP_EXTRA = {44: 15}
+RETIRED = {(9003, 44): 8}   # (session, driver): last completed lap; the next lap row exists but has NO duration, and no laps follow
 meetings = [{"meeting_key": m, "year": 2024, "circuit_key": 10 + m % 10, "meeting_name": f"GP {m}", "meeting_official_name": f"Official GP {m}",
              "location": f"City {m}", "country_key": 1, "country_code": "XXX", "circuit_short_name": f"Circuit{m}",
              "date_start": iso(datetime(2024, 3, 1 + 8 * (m - 1001), 11, tzinfo=UTC)), "gmt_offset": "00:00:00"} for m in (1001, 1002)]
@@ -50,6 +51,12 @@ for key, mk, stype, sname, start in SESSIONS:
         t = "Ferrari" if (key == 9003 and n == 63) else team   # mid-season team change for driver 63
         drivers_all.append({"driver_number": n, "session_key": key, "meeting_key": mk, "full_name": full, "name_acronym": acr,
                             "team_name": t, "team_colour": "FF0000", "country_code": "GBR", "headshot_url": "http://x/h.png"})
+# Sprint Qualifying for meeting 1002 (no laps, it only sets the sprint grid), earlier the same day
+sessions.append({"session_key": 9004, "meeting_key": 1002, "circuit_key": 10 + 1002 % 10, "year": 2024, "session_name": "Sprint Qualifying", "session_type": "Qualifying",
+                 "date_start": iso(datetime(2024, 3, 9, 10, 0, tzinfo=UTC)), "date_end": iso(datetime(2024, 3, 9, 10, 45, tzinfo=UTC)), "gmt_offset": "00:00:00"})
+for n, (full, acr, team) in DRIVERS.items():
+    drivers_all.append({"driver_number": n, "session_key": 9004, "meeting_key": 1002, "full_name": full, "name_acronym": acr, "team_name": team,
+                        "team_colour": "FF0000", "country_code": "GBR", "headshot_url": "http://x/h.png"})
 save("sessions", "global", sessions); save("drivers", "global", drivers_all)
 
 def build_session(key, mk, stype, start):
@@ -61,8 +68,13 @@ def build_session(key, mk, stype, start):
         stints += ([{"session_key": key, "meeting_key": mk, "driver_number": n, "stint_number": 1, "compound": "MEDIUM", "tyre_age_at_start": 0, "lap_start": 1, "lap_end": pit_lap},
                     {"session_key": key, "meeting_key": mk, "driver_number": n, "stint_number": 2, "compound": "HARD", "tyre_age_at_start": 0, "lap_start": pit_lap + 1, "lap_end": NLAPS}]
                    if pit_lap else [{"session_key": key, "meeting_key": mk, "driver_number": n, "stint_number": 1, "compound": "MEDIUM", "tyre_age_at_start": 1, "lap_start": 1, "lap_end": NLAPS}])
+        if (key, n) in RETIRED:
+            for st in stints:
+                if st["driver_number"] == n and st["session_key"] == key and st["lap_end"] == NLAPS: st["lap_end"] = RETIRED[(key, n)] + 1
         age0 = 0
+        ret_after = RETIRED.get((key, n))
         for lap in range(1, NLAPS + 1):
+            if ret_after is not None and lap > ret_after + 1: break
             if pit_lap and lap == pit_lap + 1: age0 = pit_lap + 1
             age = lap - age0
             d = base[n] + 0.06 * age - 0.035 * lap + random.uniform(-0.15, 0.15)
@@ -72,12 +84,15 @@ def build_session(key, mk, stype, start):
             if pit_lap and lap == pit_lap + 1: d += OUTLAP_EXTRA.get(n, 19)
             s1, s2 = d * 0.30, d * 0.36
             ds = start + timedelta(seconds=120 + cum[n])
-            laps.append({"session_key": key, "meeting_key": mk, "driver_number": n, "lap_number": lap, "date_start": iso(ds), "lap_duration": round(d, 3),
-                         "duration_sector_1": round(s1, 3), "duration_sector_2": round(s2, 3), "duration_sector_3": round(d - s1 - s2, 3),
+            partial = ret_after is not None and lap == ret_after + 1      # the retiring car's last, unfinished lap
+            no_lap1 = (key, n) == (9003, 63) and lap == 1                 # OpenF1 often has neither a start nor a duration for lap 1
+            laps.append({"session_key": key, "meeting_key": mk, "driver_number": n, "lap_number": lap, "date_start": None if no_lap1 else iso(ds), "lap_duration": None if (partial or no_lap1) else round(d, 3),
+                         "duration_sector_1": None if (partial or no_lap1) else round(s1, 3), "duration_sector_2": None if (partial or no_lap1) else round(s2, 3),
+                         "duration_sector_3": None if (partial or no_lap1) else round(d - s1 - s2, 3),
                          "i1_speed": 280 + n % 7, "i2_speed": 250 + n % 5, "st_speed": 320 + n % 9, "is_pit_out_lap": bool(pit_lap and lap == pit_lap + 1),
                          "segments_sector_1": json.dumps([2049, 2049]), "segments_sector_2": json.dumps([2049]), "segments_sector_3": json.dumps([2048])})
             starts[(n, lap)] = ds
-            cum[n] += d
+            if not partial: cum[n] += d
             if pit_lap and lap == pit_lap:
                 pits.append({"session_key": key, "meeting_key": mk, "driver_number": n, "lap_number": lap, "date": iso(ds + timedelta(seconds=d - 20)), "pit_duration": 22.4})
             if not is_race and lap == 3:      # practice/qualifying: a garage visit, reported as a 'pit stop' with minutes of pit-lane time
@@ -88,18 +103,21 @@ for key, mk, stype, sname, start in SESSIONS:
     is_race = stype == "Race"
     laps, starts, pits, stints, cum = build_session(key, mk, stype, start)
     save("laps", key, laps); save("stints", key, stints); save("pit", key, pits)
-    order = sorted(cum, key=cum.get)
+    order = sorted(cum, key=lambda n: ((key, n) in RETIRED, cum[n]))
     # position events: one per driver per lap end, ranked by cumulative time
     pos_rows, ccum = [], {n: 0.0 for n in DRIVERS}
     for lap in range(1, NLAPS + 1):
-        for n in DRIVERS: ccum[n] += next(l["lap_duration"] for l in laps if l["driver_number"] == n and l["lap_number"] == lap)
-        for rank, n in enumerate(sorted(ccum, key=ccum.get), 1):
+        live = []
+        for n in DRIVERS:
+            d_ = next((l["lap_duration"] for l in laps if l["driver_number"] == n and l["lap_number"] == lap and l["lap_duration"] is not None), None)
+            if d_ is not None: ccum[n] += d_; live.append(n)
+        for rank, n in enumerate(sorted(live, key=ccum.get), 1):
             pos_rows.append({"session_key": key, "meeting_key": mk, "driver_number": n, "position": rank, "date": iso(start + timedelta(seconds=120 + ccum[n]))})
     save("position", key, pos_rows)
     # intervals every 30s; string-typed (as sanitiser would emit) for session 9003
     iv = []
     if is_race:
-        for k in range(0, int(cum[order[-1]] // 30)):
+        for k in range(0, int(max(cum.values()) // 30)):
             ts = start + timedelta(seconds=120 + 30 * k)
             for r, n in enumerate(order):
                 g = None if r == 0 else round(r * 1.4 + random.uniform(-0.3, 0.3), 3)
@@ -124,22 +142,33 @@ for key, mk, stype, sname, start in SESSIONS:
                {"session_key": key, "meeting_key": mk, "date": iso(s_sc), "category": "SafetyCar", "flag": None, "scope": "Track", "message": "SAFETY CAR DEPLOYED", "lap_number": SC_LAPS[0], "driver_number": None, "sector": None},
                {"session_key": key, "meeting_key": mk, "date": iso(e_sc), "category": "SafetyCar", "flag": None, "scope": "Track", "message": "SAFETY CAR IN THIS LAP", "lap_number": SC_LAPS[1], "driver_number": None, "sector": None},
                {"session_key": key, "meeting_key": mk, "date": iso(e_sc + timedelta(seconds=70)), "category": "Flag", "flag": "GREEN", "scope": "Track", "message": "TRACK CLEAR", "lap_number": SC_LAPS[1] + 1, "driver_number": None, "sector": None},
-               {"session_key": key, "meeting_key": mk, "date": iso(starts[(11, 9)] + timedelta(seconds=20)), "category": "Other", "flag": None, "scope": "Driver", "message": "FIA STEWARDS: 5 SECOND TIME PENALTY FOR CAR 11 (PER) - SPEEDING IN THE PIT LANE", "lap_number": None, "driver_number": 11, "sector": None}]
+               {"session_key": key, "meeting_key": mk, "date": iso(starts[(11, 9)] + timedelta(seconds=20)), "category": "Other", "flag": None, "scope": "Driver", "message": "FIA STEWARDS: 5 SECOND TIME PENALTY FOR CAR 11 (PER) - SPEEDING IN THE PIT LANE", "lap_number": 9, "driver_number": 11, "sector": None},
+               # the stewards later confirm it was served: real data wording ('PENALTY SERVED - <the penalty>'); the same penalty, not a second one
+               {"session_key": key, "meeting_key": mk, "date": iso(starts[(11, 11)] + timedelta(seconds=20)), "category": "Other", "flag": None, "scope": "Driver", "message": "FIA STEWARDS: PENALTY SERVED - 5 SECOND TIME PENALTY FOR CAR 11 (PER) - SPEEDING IN THE PIT LANE", "lap_number": 11, "driver_number": 11, "sector": None}]
+    if key == 9003:    # a VSC that is upgraded to a Safety Car (no 'VIRTUAL SAFETY CAR ENDING' ever), as in the real 2024 Shanghai race
+        for lap_, msg_ in ((4, "VIRTUAL SAFETY CAR DEPLOYED"), (5, "SAFETY CAR DEPLOYED"), (6, "SAFETY CAR IN THIS LAP")):
+            rc.append({"session_key": key, "meeting_key": mk, "date": iso(starts[(1, lap_)] + timedelta(seconds=5)), "category": "SafetyCar", "flag": None, "scope": "Track",
+                       "message": msg_, "lap_number": lap_, "driver_number": None, "sector": None})
+        rc.append({"session_key": key, "meeting_key": mk, "date": iso(starts[(1, 10)] + timedelta(seconds=10)), "category": "SafetyCar", "flag": None, "scope": "Track",
+                   "message": "VIRTUAL SAFETY CAR DEPLOYED", "lap_number": 10, "driver_number": None, "sector": None})
     save("race_control", key, rc)
     # results
     res = []
     for p, n in enumerate(order, 1):
         if is_race:
             lapped = key == 9003 and n == 63
-            res.append({"session_key": key, "meeting_key": mk, "driver_number": n, "position": p, "dnf": False, "dns": False, "dsq": False, "number_of_laps": NLAPS - (1 if lapped else 0),
+            retired = (key, n) in RETIRED
+            res.append({"session_key": key, "meeting_key": mk, "driver_number": n, "position": None if retired else p, "dnf": retired, "dns": False, "dsq": False,
+                        "number_of_laps": RETIRED[(key, n)] if retired else NLAPS - (1 if lapped else 0),
                         "duration": (str(round(cum[n], 3)) if key == 9003 else round(cum[n], 3)), "gap_to_leader": ("+1 LAP" if lapped else (round(cum[n] - cum[order[0]], 3) if key == 9002 else str(round(cum[n] - cum[order[0]], 3))))})
         else:
             q = [round(89.5 + 0.3 * p - i * 0.4, 3) for i in range(3)]
             res.append({"session_key": key, "meeting_key": mk, "driver_number": n, "position": p, "dnf": False, "dns": False, "dsq": False, "number_of_laps": 12,
                         "duration": json.dumps(q), "gap_to_leader": json.dumps([0.0, round(0.3 * (p - 1), 3), round(0.3 * (p - 1), 3)])})
     save("session_result", key, res)
-    grid = [{"session_key": key, "meeting_key": mk, "driver_number": n, "position": p, "lap_duration": 89.0 + p * 0.3} for p, n in enumerate(reversed(order) if key == 9002 else order, 1)]
-    save("starting_grid", key, grid)
+    gkey = {9002: 9001, 9003: 9004}.get(key, key)          # race 9002's grid rows are keyed to its Qualifying session 9001
+    grid = [{"session_key": gkey, "meeting_key": mk, "driver_number": n, "position": p, "lap_duration": 89.0 + p * 0.3} for p, n in enumerate(reversed(order) if key == 9002 else order, 1)]
+    if is_race: save("starting_grid", key, grid)
     if is_race:
         save("overtakes", key, [{"session_key": key, "meeting_key": mk, "date": iso(starts[(63, 4)] + timedelta(seconds=30)), "overtaking_driver_number": 63, "overtaken_driver_number": 11, "position": 3},
                                 {"session_key": key, "meeting_key": mk, "date": iso(starts[(44, 5)] + timedelta(seconds=75)), "overtaking_driver_number": 11, "overtaken_driver_number": 44, "position": 3}])
@@ -150,6 +179,7 @@ for key, mk, stype, sname, start in SESSIONS:
     car, loc = [], []
     for n in (1, 44):
         for l in (x for x in laps if x["driver_number"] == n and (TEL_LAPS is None or x["lap_number"] <= TEL_LAPS)):
+            if l["lap_duration"] is None: continue
             t0 = datetime.fromisoformat(l["date_start"]); steps = int(l["lap_duration"] * 4)
             for k in range(steps):
                 ph = k / steps; spd = int(200 + 110 * math.sin(2 * math.pi * ph * 3))
@@ -158,6 +188,13 @@ for key, mk, stype, sname, start in SESSIONS:
                             "n_gear": 1 + spd // 45, "throttle": 0 if brk else 100, "brake": brk, "drs": 12 if (spd > 280 and not brk) else 0})
                 loc.append({"session_key": key, "meeting_key": mk, "driver_number": n, "date": iso(t0 + timedelta(seconds=k * 0.25 + 0.07)),
                             "x": 1000.0 * math.cos(2 * math.pi * ph), "y": 600.0 * math.sin(2 * math.pi * ph), "z": 10.0})
+        # after the last timed lap: 90 s of slow driving (cool-down lap / pit lane). It must NOT be credited to that last lap.
+        last = [x for x in laps if x["driver_number"] == n and x["lap_duration"] is not None and (TEL_LAPS is None or x["lap_number"] <= TEL_LAPS)][-1]
+        t_end = datetime.fromisoformat(last["date_start"]) + timedelta(seconds=last["lap_duration"])
+        for k in range(360):
+            car.append({"session_key": key, "meeting_key": mk, "driver_number": n, "date": iso(t_end + timedelta(seconds=0.5 + k * 0.25)), "rpm": 5000, "speed": 60,
+                        "n_gear": 2, "throttle": 5, "brake": 0, "drs": 0})
+            loc.append({"session_key": key, "meeting_key": mk, "driver_number": n, "date": iso(t_end + timedelta(seconds=0.57 + k * 0.25)), "x": 1000.0, "y": 0.0, "z": 10.0})
     save("car_data", key, car); save("location", key, loc)
 # radio transcripts (shape written by airflow/dags/modules/radio_transcriber.py); prefix differs from team_radio_* on purpose
 for key, mk, stype, sname, start in SESSIONS:

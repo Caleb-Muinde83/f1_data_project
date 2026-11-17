@@ -14,7 +14,7 @@ def stint_gantt_fig(df: pd.DataFrame, pits: pd.DataFrame = None):
                     marker_color=COMPOUND_COLOURS.get(comp, "#888888"),
                     hovertext=[f"stint {s}: laps {a}-{b}" for s, a, b in zip(g["stint_number"], g["first_lap"], g["last_lap"])])
     if pits is not None and not pits.empty:
-        fig.add_scatter(x=pits["lap_number"], y=pits["driver"], mode="markers", name="pit stop", marker={"symbol": "line-ns", "size": 16, "color": "#fff", "line": {"width": 2}})
+        fig.add_scatter(x=pits["lap_number"], y=pits["driver"], mode="markers", name="pit stop", marker={"symbol": "line-ns", "size": 18, "color": "#111111", "line": {"width": 3, "color": "#111111"}})
     fig.update_layout(barmode="overlay", xaxis_title="Lap", yaxis={"autorange": "reversed"})
     return fig
 

@@ -3,7 +3,7 @@ import streamlit as st
 from ... import charts, data
 from ...components import plot, header, kpis, race_timeline, timing
 from ...provenance import panel
-from .._common import need_context, need_race
+from .._common import need_context, need_laps, need_race
 
 
 def render(con):
@@ -15,7 +15,10 @@ def render(con):
     if not need_race(ctx, "The race replay"):
         return
     total = data.session_laps(con, ctx.session_key)
-    lap = race_timeline.replay_controls(total, key="ana_dur_lap")
+    if not need_laps(total, ctx.session_name):
+        return
+    events = data.race_events(con, ctx.session_key)
+    lap = race_timeline.replay_controls(total, key="ana_dur_lap", events=events)
     laps = data.lap_table(con, ctx.session_key)
     order = data.race_order(con, ctx.session_key)
     upto = laps[laps.lap_number <= lap]
@@ -28,6 +31,9 @@ def render(con):
                   ("Gap ahead", kpis.fmt_gap(me.iloc[0].interval) if not me.empty else "-", "interval at lap end"),
                   ("Track", ((laps[laps.lap_number == lap].track_status.dropna().mode().iloc[0]) if laps[laps.lap_number == lap].track_status.notna().any() else "-"), "race control")])
 
+    panel("Race events", "measured", source="fct_safety_car_events, fct_penalties, fct_pit_stops, fct_race_results, fct_fastest_laps",
+          note="Every event on one lap axis. Use 'Jump to event' above to move the replay to it.")
+    plot.show(charts.event_timeline_fig(events, lap), st)
     panel("Timing tower", "measured", source="fct_lap_performance", note="Position and gaps come from cumulative race time, so they always agree with the position chart below.")
     timing.show_tower(laps, lap, ctx.driver, order)
 

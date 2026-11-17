@@ -236,3 +236,195 @@ def test_garage_visits_never_pollute_pit_stops_or_circuit_pit_loss(con):
     assert data.q(con, "SELECT COUNT(*) FROM fct_pit_stops p JOIN dim_sessions s USING (session_key) WHERE s.session_type NOT IN ('Race','Sprint')").iloc[0, 0] == 0
     pl = data.pit_loss(con, int(data.session_row(con, RACE).circuit_key))
     assert 10 < float(pl.median_green_pit_lane_time_seconds.iloc[0]) < 120
+
+
+def test_grid_positions_resolve_directly_and_via_the_qualifying_session(con):
+    """Real OpenF1 keys starting_grid rows to the session that set the grid. Race 9002's rows are keyed to Qualifying 9001; 9003 is keyed directly."""
+    src = data.q(con, "SELECT session_key, grid_source, COUNT(grid_position) AS n FROM fct_race_results WHERE session_type IN ('Race', 'Sprint') GROUP BY 1, 2 ORDER BY 1")
+    # race 9002: grid keyed to Qualifying 9001. Sprint 9003 (OpenF1 type 'Race', name 'Sprint'): keyed to Sprint Qualifying 9004. Qualifying runs AFTER a sprint,
+    # so a Sprint must never be matched to the weekend's Qualifying session.
+    assert dict(zip(src.session_key, src.grid_source)) == {9002: "starting_grid_via_qualifying", 9003: "starting_grid_via_qualifying"} and (src.n > 0).all()
+    assert not data.starting_grid(con, RACE).empty
+
+
+def test_a_retired_cars_unfinished_lap_does_not_distort_the_race_trace(con):
+    """Real data: a retiring driver's last lap has no duration; SUM skipped it and everyone looked 140 s behind at that lap."""
+    o = data.race_order(con, 9003)
+    assert not o.empty and o.gap_to_leader.max() < 60
+    retired = o[o.driver_number == 44]
+    assert retired.lap_number.max() <= 8                     # no cumulative time for his unfinished lap 9
+
+
+def test_incident_summary_is_one_row_per_event_not_per_car(con):
+    per_car, summary = data.lap_incidents(con, RACE), data.incident_summary(con, RACE)
+    assert len(summary) < len(per_car) and summary.cars_affected.max() > 1
+
+
+def test_data_health_checks_run_and_flag_nothing_on_the_fixtures(con):
+    h = data.health_checks(con)
+    assert len(h) == 5 and not (h.status == "warn").any(), h.to_dict("records")
+    assert h.set_index("check").loc["Races/sprints with starting-grid positions", "result"] == "2 of 2"
+
+
+def test_telemetry_after_the_last_lap_is_not_credited_to_it(con):
+    """Regression: samples recorded after a lap ended (cool-down, garage) used to be credited to the previous lap."""
+    late = data.q(con, """SELECT COUNT(*) FROM fct_telemetry t JOIN stg_laps l USING (session_key, driver_number, lap_number)
+        WHERE EXTRACT(EPOCH FROM (t.telemetry_timestamp - l.date_start)) > l.lap_duration + 5""").iloc[0, 0]
+    assert late == 0 and data.q(con, "SELECT COUNT(*) FROM fct_telemetry WHERE lap_number IS NULL").iloc[0, 0] > 0
+
+
+def test_a_sprint_is_typed_sprint_and_scored_on_the_sprint_scale(con):
+    """Regression (found on real data): OpenF1 types a Sprint 'Race', so sprints were scored 25-18-15... and could not find their grid."""
+    row = data.session_row(con, 9003)
+    assert row.session_name == "Sprint" and row.session_type == "Sprint"
+    pts = data.q(con, "SELECT MAX(total_points) FROM fct_race_results WHERE session_key = 9003").iloc[0, 0]
+    assert pts == 8
+    assert data.q(con, "SELECT MAX(total_points) FROM fct_race_results WHERE session_key = 9002").iloc[0, 0] >= 25
+
+
+def test_a_driver_with_no_lap_one_data_is_not_ahead_of_the_field(con):
+    """Regression (found on real data): with no lap-1 duration/start SUM omitted lap 1, so that driver looked ~100 s ahead for the whole race."""
+    o = data.race_order(con, 9003)
+    d63 = o[o.driver_number == 63].set_index("lap_number")
+    leader_gap = d63.gap_to_leader
+    assert leader_gap.loc[2] >= 0 and leader_gap.max() < 60 and (o.groupby("lap_number").position.max() >= 3).all()
+    assert o[o.lap_number == 1].shape[0] >= 3            # lap 1 is still ranked: ends come from the next lap's start
+
+
+def test_a_vsc_upgraded_to_a_safety_car_ends_when_the_safety_car_starts(con):
+    """Regression (real 2024 Shanghai): VSC deployed, then SAFETY CAR DEPLOYED 4 minutes later, and no VSC ENDING message at all."""
+    p = data.q(con, "SELECT track_status, period_start, period_end, is_unclosed FROM int_track_status_periods WHERE session_key = 9003 ORDER BY period_start")
+    first, sc = p.iloc[0], p.iloc[1]
+    assert (first.track_status, sc.track_status) == ("VSC", "SC")
+    assert first.period_end == sc.period_start and not first.is_unclosed        # ends exactly when the SC starts
+    assert p[p.track_status == "VSC"].is_unclosed.tolist() == [False, True]       # the later VSC really has no ending and stays capped
+
+
+def test_a_session_without_laps_does_not_crash_session_laps(con):
+    """Regression (crashed the real app): MAX(lap_number) of a session with no laps is NA, and `NA == NA` is ambiguous."""
+    assert data.session_laps(con, 9004) == 0 and data.drivers_with_laps(con, 9004) == set()
+    assert data.session_laps(con, RACE) == 12 and 1 in data.drivers_with_laps(con, RACE)
+
+
+def test_race_events_put_everything_on_one_lap_axis(con):
+    ev = data.race_events(con, RACE)
+    assert {"Neutralisation", "Pit stop", "Fastest lap"} <= set(ev.kind) and ev.lap.is_monotonic_increasing and ev.lap.between(1, 13).all()
+    sprint = data.race_events(con, 9003)
+    assert "Retirement" in set(sprint.kind) and set(sprint[sprint.kind == "Retirement"].driver) == {"HAM"}
+
+
+def _page_with(module, db, patch="", session=RACE, meeting=RACE_MEETING, state=""):
+    def script(module, db, session, meeting, patch, state):
+        import importlib
+        import pandas as pd
+        import streamlit as st
+        from f1_dash import data
+        st.session_state["ctx_meeting"], st.session_state["ctx_session"] = meeting, session
+        ns = {"data": data, "pd": pd, "st": st}
+        exec(state, ns)
+        exec(patch, ns)
+        importlib.import_module(f"f1_dash.workspaces.{module}").render(data.connect(db))
+    return AppTest.from_function(script, args=(module, db, session, meeting, patch, state), default_timeout=90).run()
+
+
+def test_a_focus_driver_without_laps_is_called_out_not_silently_blank(warehouse_path):
+    at = _page_with("engineer.during_race", warehouse_path, patch="data.drivers_with_laps = lambda con, sk: {1, 11}", state="st.session_state['ctx_driver'] = 63")
+    assert not at.exception, [str(e.value) for e in at.exception]
+    assert any("no laps in this session" in w.value for w in at.warning)
+
+
+def test_jump_to_event_moves_the_replay_lap(warehouse_path):
+    at = _page_with("analyst.during_race", warehouse_path)
+    options = at.selectbox(key="ana_dur_lap_jump").options
+    assert len(options) > 1
+    target = options[1]
+    at.selectbox(key="ana_dur_lap_jump").select(target).run()
+    assert not at.exception, [str(e.value) for e in at.exception]
+    assert at.slider(key="ana_dur_lap").value == int(target.split(":")[0].replace("Lap ", ""))
+
+
+@pytest.mark.parametrize("module", ["engineer.during_race", "analyst.during_race", "scientist.during_race", "analyst.post_race", "scientist.post_race", "engineer.post_race"])
+def test_a_race_whose_lap_data_is_missing_renders_instead_of_crashing(module, warehouse_path):
+    patch = ("_lt = data.lap_table; data.lap_table = lambda con, sk: _lt(con, sk).head(0)\\n"
+             "data.session_laps = lambda con, sk: 0\\n"
+             "data.telemetry_lap_summary = lambda con, sk: pd.DataFrame()\\n"
+             "data.drivers_with_laps = lambda con, sk: set()")
+    at = _page_with(module, warehouse_path, patch=patch.replace("\\n", "\n"))
+    assert not at.exception, [str(e.value) for e in at.exception]
+
+
+def test_simulator_only_offers_sessions_with_two_compounds(con):
+    """Regression (real 2025 Shanghai): the page defaulted to a session the simulator then rejected ('found [MEDIUM]')."""
+    from f1_dash.components import simulator
+    assert simulator.viable(con, [9001, 9002], driver=1, total_laps=12) == [9002]         # qualifying has one compound, the race has two
+
+
+def test_scientist_pre_race_offers_the_circuits_earlier_races_as_calibration(warehouse_path):
+    """When the weekend has no session with two compounds, an earlier race at the same circuit (valid pre-race information) is the calibration source."""
+    patch = ("import pandas as pd\n"
+             "data.prior_races_at_circuit = lambda con, ck, ts: pd.DataFrame({'year': [2024], 'session_key': [9002], 'session_name': ['Sprint'], "
+             "'session_start_time': [pd.Timestamp('2024-03-02')], 'winner': ['VER'], 'winning_team': ['Red Bull Racing']})")
+    at = _page_with("scientist.pre_race", warehouse_path, patch=patch, session=9003, meeting=1002)
+    assert not at.exception, [str(e.value) for e in at.exception]
+    box = at.selectbox(key="ds_pre_calib_9003")
+    assert box.options == ["2024 Sprint at this circuit (9002)"] and (box.value == 9002 or "9002" in str(box.value))
+    assert at.number_input(key="ds_pre_laps").value == 12            # the earlier Sprint's distance (target is a Sprint), not a hard-coded 57
+    assert not any("cannot be calibrated" in c.value for c in at.caption)
+
+
+def test_scientist_pre_race_says_so_when_nothing_can_calibrate_the_simulator(warehouse_path):
+    at = _page_with("scientist.pre_race", warehouse_path, session=9003, meeting=1002)
+    assert not at.exception, [str(e.value) for e in at.exception]
+    assert any("cannot be calibrated" in c.value for c in at.caption)
+
+
+def test_points_progression_defaults_to_the_selected_race(warehouse_path):
+    at = _page_with("analyst.post_race", warehouse_path)
+    assert not at.exception, [str(e.value) for e in at.exception]
+    assert at.checkbox(key="ana_post_season").value is False
+
+
+def test_a_penalty_served_notice_is_not_a_second_penalty(con):
+    """Regression (real 2026 Shanghai): 'FIA STEWARDS: PENALTY SERVED - 10 SECOND TIME PENALTY FOR CAR 31 (OCO) - ...' was counted as a second penalty."""
+    pn = data.penalties(con, RACE)
+    assert len(pn) == 1 and pn.iloc[0].driver == "PER" and pn.iloc[0].penalty_seconds == 5
+    assert pn.iloc[0].lap_number == 9 and pn.iloc[0].served_lap == 11
+    ev = data.race_events(con, RACE)
+    assert ev[ev.kind == "Penalty"].detail.iloc[0].endswith("(served lap 11)") and (ev.kind == "Penalty").sum() == 1
+
+
+def test_scientist_race_distance_comes_from_the_last_race_not_a_sprint(warehouse_path):
+    """Regression (real 2025 Shanghai): the default distance was the 19-lap Sprint's, so every simulated strategy was 19 laps long."""
+    patch = ("import pandas as pd\n"
+             "data.prior_races_at_circuit = lambda con, ck, ts: pd.DataFrame({'year': [2025, 2024], 'session_key': [9003, 9002], 'session_name': ['Sprint', 'Race'], "
+             "'session_start_time': [pd.Timestamp('2025-03-22'), pd.Timestamp('2024-03-24')], 'winner': ['A', 'B'], 'winning_team': ['X', 'Y']})\n"
+             "data.race_distance = lambda con, sk: {9002: 56, 9003: 19}.get(int(sk), 0)")
+    at = _page_with("scientist.pre_race", warehouse_path, patch=patch)           # target: Race 9002
+    assert not at.exception, [str(e.value) for e in at.exception]
+    assert at.number_input(key="ds_pre_laps").value == 56
+
+
+def test_race_distance_is_the_leaders_laps_not_the_biggest_lap_row(con, monkeypatch):
+    """Regression (real 2024 Shanghai): MAX(lap_number) said 58 for a 56-lap race (rows recorded after the flag), so the simulator ran 58-lap strategies."""
+    monkeypatch.setattr(data, "session_laps", lambda c, sk: 58)
+    assert data.race_distance(con, RACE) == 12                      # the classified leader's laps (fixture race = 12 laps)
+    assert data.race_distance(con, 9004) == 58                      # no classification at all -> fall back to the lap table
+
+
+def test_telemetry_sessions_are_listed(con):
+    assert 9001 in data.sessions_with_telemetry(con) and 9004 not in data.sessions_with_telemetry(con)
+
+
+def test_engineer_pre_race_defaults_to_a_baseline_session_that_has_telemetry(warehouse_path):
+    at = _page_with("engineer.pre_race", warehouse_path)
+    assert not at.exception, [str(e.value) for e in at.exception]
+    assert not any("Telemetry has not been built" in i.value for i in at.info)
+
+
+def test_engineer_pre_race_says_how_to_build_missing_telemetry(warehouse_path):
+    """Real 2026 Shanghai: telemetry existed only for the race, so every pre-race telemetry panel was blank with no explanation."""
+    at = _page_with("engineer.pre_race", warehouse_path, patch="data.sessions_with_telemetry = lambda con: set()")
+    assert not at.exception, [str(e.value) for e in at.exception]
+    msg = " ".join(i.value for i in at.info)
+    assert "Telemetry has not been built" in msg and "telemetry_only_sessions: [9001]" in msg
+    assert "no telemetry built" in at.selectbox(key="eng_pre_base_9002").options[0]

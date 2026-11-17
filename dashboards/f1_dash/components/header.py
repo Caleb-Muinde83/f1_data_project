@@ -15,6 +15,18 @@ def banner(ctx, role: str, phase: str, as_of: str = ""):
         f'<div class="f1-banner"><b>{role.upper()}</b><span>&middot;</span><b style="color:#e10600">{label}</b><span>&middot;</span>'
         f'<span>{ctx.year} {ctx.session_name} (session {ctx.session_key}){extra}</span>'
         f'<span class="f1-note">&nbsp;{hint} Source: DuckDB warehouse, status: completed.</span></div>', unsafe_allow_html=True)
+    driver_notice(ctx)
+
+
+def driver_notice(ctx):
+    """The focus/comparison driver may not have started (DNS): their KPIs and charts are then empty. Say so instead of leaving a blank panel."""
+    if not ctx.laps_drivers:
+        return
+    missing = [ctx.acronym(n) for n in (ctx.driver, ctx.rival) if n is not None and n not in ctx.laps_drivers]
+    if missing:
+        who = " and ".join(missing)
+        st.warning(f"{who} {'has' if len(missing) == 1 else 'have'} no laps in this session (did not start?), so driver-specific panels for "
+                   f"{'them' if len(missing) > 1 else 'this driver'} are empty. Pick another driver in the sidebar.")
 
 
 def not_available(title: str, why: str):

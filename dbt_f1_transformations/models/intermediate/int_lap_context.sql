@@ -277,5 +277,11 @@ SELECT
         THEN lap_duration - {{ var('fuel_effect_seconds_per_lap') }} * (session_lap_count - lap_number)
     END AS fuel_corrected_lap_time_seconds,
     lap_duration - driver_median_clean_lap_seconds AS delta_to_driver_median_seconds,
-    SUM(lap_duration) OVER (PARTITION BY session_key, driver_number ORDER BY lap_number) AS cumulative_race_time_seconds
+    {# Cumulative race time = elapsed time at the END of the lap, measured from the first car to finish lap 1. It is built from lap END timestamps
+       (the next lap's start, or start + duration for a final lap), NOT from a running SUM of durations: OpenF1 often has no lap-1 duration/start, and
+       SUM silently skipped such laps, putting that driver ~100 s 'ahead' for the whole race; it also froze a retiring car's clock. A lap with no
+       end timestamp (a retiring car's unfinished last lap) has no cumulative time. #}
+    ({{ f1_epoch_ms('lap_end_ts') }}
+       - COALESCE(MIN(CASE WHEN lap_number = 1 THEN {{ f1_epoch_ms('lap_end_ts') }} END) OVER (PARTITION BY session_key),
+                  MIN({{ f1_epoch_ms('lap_end_ts') }}) OVER (PARTITION BY session_key))) / 1000.0 AS cumulative_race_time_seconds
 FROM with_medians

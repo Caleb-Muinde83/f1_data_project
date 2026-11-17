@@ -6,6 +6,28 @@ from . import plot
 from ..provenance import panel
 
 
+def clipped_compounds(prov: dict):
+    """Compounds whose fitted degradation was clipped to 0 because the slope was negative (fuel burn and track evolution hide wear in short stints)."""
+    return sorted(k.split(".")[0] for k, v in (prov or {}).items() if k.endswith(".degradation") and "clipped" in str(v))
+
+
+def viable(con, session_keys, driver=None, total_laps=None):
+    """Sessions the simulator can really be calibrated from: at least two compounds with a fitted pace model (the same test render() applies)."""
+    try:
+        from f1_strategy import load_inputs
+    except ImportError:
+        return []
+    ok = []
+    for sk in session_keys:
+        try:
+            _, models, _ = load_inputs(con, int(sk), driver_number=driver, total_laps=total_laps)
+            if len(models) >= 2:
+                ok.append(int(sk))
+        except Exception:
+            continue
+    return ok
+
+
 def render(con, calib_session: int, total_laps: int = None, driver: int = None, warning: str = "", key: str = "sim"):
     panel("Strategy simulator (Monte Carlo)", "simulated", source="analytics/f1_strategy, calibrated from dbt marts",
           note="Decision support, not a forecast: it ignores traffic, tyre cliffs, track evolution and rival reactions, and is not validated against real races.")
@@ -19,7 +41,13 @@ def render(con, calib_session: int, total_laps: int = None, driver: int = None, 
     except Exception as exc:
         st.warning(f"Cannot build simulator inputs from session {calib_session}: {exc}"); return
     if len(models) < 2:
-        st.warning(f"Need at least two compounds with a fitted pace model; found {sorted(models)}."); return
+        st.warning(f"Session {calib_session} has a fitted pace model for only {sorted(models)}. The simulator needs two compounds: pick a session where both were run "
+                   f"(an earlier race at this circuit is usually best)."); return
+    clipped = clipped_compounds(prov)
+    if clipped:
+        st.markdown(f'<div class="f1-alert crit">Tyre degradation could not be estimated for {", ".join(clipped)} (the fitted slope was negative and was clipped to 0). '
+                    f'With no wear modelled, the ranking below reflects only the pace difference between compounds and the pit timing: it says nothing about when the tyres wear out. '
+                    f'Calibrate from a longer, cleaner session if you can.</div>', unsafe_allow_html=True)
     c1, c2, c3 = st.columns(3)
     hazard = c1.slider("Safety car chance per lap", 0.0, 0.10, float(min(ctx.sc_hazard_per_lap, 0.10)), 0.005, key=f"{key}_sc")
     pit_loss = c2.slider("Pit loss (s)", 15.0, 35.0, float(min(max(ctx.pit_loss, 15.0), 35.0)), 0.5, key=f"{key}_pit")

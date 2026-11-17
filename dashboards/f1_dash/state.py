@@ -20,6 +20,7 @@ class Context:
     drivers: pd.DataFrame
     driver: Optional[int]           # focus driver_number
     rival: Optional[int]            # comparison driver_number
+    laps_drivers: frozenset = frozenset()   # drivers with at least one lap in this session (a DNS driver has none)
 
     @property
     def is_race(self) -> bool:
@@ -60,4 +61,4 @@ def current(con) -> Optional[Context]:
     driver = _pick(nums, "ctx_driver", nums[0] if nums else None)
     rival = _pick([n for n in nums if n != driver], "ctx_rival", next((n for n in nums if n != driver), None))
     return Context(sk, meeting, int(year), None if pd.isna(row.circuit_key) else int(row.circuit_key), row.session_name, row.session_type,
-                   row.session_start_time, target_key, target_start, drv, driver, rival)
+                   row.session_start_time, target_key, target_start, drv, driver, rival, frozenset(data.drivers_with_laps(con, sk)))
