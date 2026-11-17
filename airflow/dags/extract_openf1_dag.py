@@ -13,8 +13,6 @@ from airflow.models.param import Param
 from airflow.operators.empty import EmptyOperator
 from airflow.utils.task_group import TaskGroup
 
-from modules.universal_extractor import extract_and_save_endpoint
-from modules.pipeline_utils import build_manifest, notify_failure
 from hooks.openf1_hook import OpenF1Hook
 from slack_alerts import send_slack_failure_alert
 
@@ -145,6 +143,7 @@ with DAG(
     # ==========================================
     @task(pool='openf1_api_pool')
     def extract_mapped_data(endpoint: str, target_session: str, is_global: bool = False, **context):
+        from modules.universal_extractor import extract_and_save_endpoint
         return extract_and_save_endpoint(
             endpoint=endpoint,
             target_session=target_session,
@@ -203,6 +202,8 @@ with DAG(
     # ==========================================
     @task
     def verify_and_load(event_results, telemetry_results, results_out, **context):
+        from modules.pipeline_utils import build_manifest
+
         flat_results = []
         for task_group_results in [event_results, telemetry_results, results_out]:
             for item in task_group_results:
