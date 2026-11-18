@@ -1,736 +1,202 @@
-# f1_data_project
+# OpenF1 Data Engineering Project
 
-# OpenF1 Data Engineering Project 🏎️📊
+An end-to-end Formula 1 data platform. It pulls race, timing and telemetry data from the [OpenF1 API](https://openf1.org/), stores it as Parquet, builds an analytical warehouse with dbt, and serves it through Streamlit dashboards, a strategy simulator and a MetricFlow semantic layer.
 
-This repository contains the infrastructure, orchestration, and transformation code for a modern data stack that extracts, loads, and transforms Formula 1 telemetry and race data using the [OpenF1 API](https://openf1.org/).
+The full step-by-step teaching text for this repository is in [`F1_Data_Engineering_Handbook.md`](F1_Data_Engineering_Handbook.md).
 
-## 🏗️ Project Architecture & Tech Stack
+## How the data flows
 
-This project implements an ELT (Extract, Load, Transform) pipeline using industry-standard tools:
-* **Source:** OpenF1 API (18 endpoints including telemetry, race control, and weather)
-* **Infrastructure as Code (IaC):** OpenTofu (GCP Cloud Storage & BigQuery setup)
-* **Orchestration:** Apache Airflow (Local Docker execution & GCP Cloud Composer)
-* **Transformation:** dbt (Data Build Tool)
-* **Version Control & CI/CD:** Git, GitHub Actions
+| Stage | What happens | Where |
+|---|---|---|
+| 1. Extract | An Airflow DAG calls the OpenF1 API through a custom hook, handling pagination and 422/429 retries | `airflow/dags/extract_openf1_dag.py`, `airflow/dags/modules/universal_extractor.py` |
+| 2. Load / stage | Each endpoint and session is written to a deterministic Parquet path (re-runs are idempotent), and a JSON manifest records every file's row count and size | `airflow/data/raw/`, `airflow/dags/modules/pipeline_utils.py` |
+| 3. Transform | `dbt build` turns the Parquet files into staging views, two intermediate models and 34 marts in DuckDB (BigQuery is supported through portable SQL) | `dbt_f1_transformations/` |
+| 4. Present | A Streamlit app reads the warehouse read-only; the strategy simulator and the semantic layer sit on the same marts | `dashboards/`, `analytics/`, `dbt_f1_transformations/models/semantic/` |
 
+Optional tasks in the same DAG upload raw files to Google Cloud Storage, transcribe team-radio audio into Parquet transcripts, and run dbt inside Airflow.
 
+## Tech stack
 
-## 💻 Local Development Prerequisites
+* **Source:** OpenF1 API, 18 endpoints (telemetry, location, laps, stints, pit stops, race control, weather, results and more)
+* **Orchestration:** Apache Airflow 2.8.1 on Python 3.11, run locally with Docker Compose
+* **Warehouse:** DuckDB (local); BigQuery through the `bigquery` dbt target
+* **Transformation:** dbt with the `dbt-duckdb` adapter
+* **Presentation:** Streamlit and Plotly, Monte Carlo strategy simulator, MetricFlow metrics
+* **Infrastructure as code:** OpenTofu (GCS bucket and BigQuery datasets)
+* **CI/CD:** GitHub Actions
 
-To run and develop this project locally, install the following system tools:
+## Prerequisites
 
-| Tool | Purpose |
-|-----|------|
-| **Git** | Version control and collaboration |
-| **Python 3.9 – 3.12** | Virtual environments, DAG scripts, and dbt compilation |
-| **Docker Desktop** | Running the local Airflow environment |
-| **Google Cloud CLI (`gcloud`)** | Authentication and interaction with Google Cloud |
-| **OpenTofu** | Infrastructure provisioning (GCP resources) |
-| **dbt (Data Build Tool)** | Data transformation and modeling inside BigQuery |
+| Tool | Needed for |
+|---|---|
+| Git | Version control |
+| Python 3.11 (3.9 or newer works locally) | dbt, dashboards, tests |
+| Docker Desktop (with Compose) | Running Airflow locally |
+| Google Cloud CLI and OpenTofu | Optional: only for the GCS/BigQuery path |
 
----
-
-## 🛠 Installing Local Development Prerequisites
-
-To run this project locally, install the following tools depending on your operating system.
-
----
-
-# 🪟 Windows Installation
-
-### 1. Install Git
-Download and install Git:
-
-https://git-scm.com/download/win
-
-Verify installation:
+Install the Python packages you need into a virtual environment:
 
 ```bash
-git --version
+python -m venv venv
+source venv/bin/activate            # Windows (Git Bash): source venv/Scripts/activate
+pip install dbt-duckdb pyarrow pandas numpy pytest streamlit plotly duckdb
+pip install -r dashboards/requirements.txt
 ```
 
----
+## Quick start
 
-### 2. Install Python (3.9 – 3.12)
-
-Download Python:
-
-https://www.python.org/downloads/
-
-During installation:
-- ✅ Check **"Add Python to PATH"**
-
-Verify:
+### 1. Check everything works (no API, no Docker)
 
 ```bash
-python --version
-pip --version
+make ci-test
 ```
 
----
+This generates a small synthetic OpenF1-shaped dataset, runs the Python unit tests, runs `dbt seed` and `dbt build` (all models and tests) on it, and runs the dashboard tests.
 
-### 3. Install Docker Desktop
+If `dbt deps` cannot reach the dbt package hub from your network, the project still builds without packages: no model uses them, so you can move `dbt_f1_transformations/packages.yml` and `package-lock.yml` aside.
 
-Download:
-
-https://www.docker.com/products/docker-desktop/
-
-After installation verify:
+### 2. Run the pipeline on real data
 
 ```bash
-docker --version
-docker compose version
+cp airflow/.env.example airflow/.env      # then fill in the passwords and keys
+make airflow-up                            # Airflow UI at http://localhost:8080
 ```
 
----
-
-### 4. Install Google Cloud CLI
-
-Download installer:
-
-https://cloud.google.com/sdk/docs/install
-
-Verify:
+Generate the two keys with:
 
 ```bash
-gcloud version
+python -c "import secrets; print(secrets.token_hex(32))"                              # AIRFLOW_WEBSERVER_SECRET_KEY
+python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"   # AIRFLOW_FERNET_KEY
 ```
 
-Authenticate:
+Trigger `extract_openf1_dag`, then build the warehouse:
+
+```bash
+make dbt-build                             # dbt build, target dev
+```
+
+Stop Airflow with `make airflow-down`. Your Parquet data and warehouse stay on disk.
+
+### 3. Explore
+
+```bash
+F1_DUCKDB_PATH=/path/to/f1_local_warehouse.duckdb make dashboard
+make strategy SESSION=9158                 # rank race strategies for a session (optional DRIVER=1)
+make semantic-validate                     # needs: pip install dbt-metricflow
+```
+
+Run `make dashboard` from the repository root so Streamlit picks up `.streamlit/config.toml`.
+
+## Make targets
+
+| Target | What it does |
+|---|---|
+| `make fixtures` | Generate the synthetic Parquet dataset in `.ci_raw/` |
+| `make unit` | Python unit tests (extractor, loaders, strategy simulator) |
+| `make ci-test` | Everything CI runs: unit tests, dbt seed and build on synthetic data, dashboard tests |
+| `make dbt-build` | `dbt build` against your real data (target `dev`) |
+| `make dbt-docs` | Generate and serve the dbt documentation site |
+| `make export` | Partitioned Parquet export of all telemetry (long) |
+| `make dashboard` | Streamlit dashboards over your warehouse |
+| `make strategy` | Monte Carlo strategy ranking |
+| `make semantic-validate` | Validate the MetricFlow semantic layer |
+| `make bq-emulator-test` | Build on the BigQuery emulator and compare table by table with DuckDB |
+| `make airflow-up` / `make airflow-down` | Start or stop local Airflow |
+
+## Configuration
+
+Paths and targets are set by environment variables, with defaults for a local Windows setup:
+
+| Variable | Meaning |
+|---|---|
+| `F1_RAW_DATA_PATH` | Folder holding the raw Parquet files |
+| `F1_DUCKDB_PATH` | DuckDB warehouse file |
+| `F1_EXPORT_PATH` | Output folder for the telemetry export |
+| `F1_BQ_PROJECT`, `F1_BQ_DATASET`, `F1_BQ_LOCATION` | BigQuery target settings |
+| `ALERT_WEBHOOK_URL` | Optional Slack webhook for task-failure alerts |
+| `GCS_RAW_BUCKET` | Optional bucket for the raw-file upload task |
+
+dbt targets are defined in `dbt_f1_transformations/profiles.yml`: `dev` (your machine), `container` (inside Airflow), `ci` (synthetic data), `bigquery`, and `bigquery_emulator`. For example:
+
+```bash
+cd dbt_f1_transformations
+dbt build --profiles-dir . --target dev
+```
+
+Telemetry is large. To build it for chosen sessions only:
+
+```bash
+dbt build --select fct_telemetry+ --vars '{telemetry_only_sessions: [9158]}'
+```
+
+## Optional: Google Cloud setup
+
+Only needed for the GCS and BigQuery path.
 
 ```bash
 gcloud auth login
-```
-
----
-
-### 5. Install OpenTofu
-
-Install via Chocolatey (recommended):
-
-```bash
-choco install opentofu
-```
-
-Or download manually:
-
-https://opentofu.org/docs/intro/install/
-
-Verify:
-
-```bash
-tofu version
-```
-
----
-
-### 6. Install dbt (BigQuery Adapter)
-
-Inside your Python environment:
-
-```bash
-pip install dbt-bigquery
-```
-
-Verify:
-
-```bash
-dbt --version
-```
-
----
-
-# 🍎 macOS Installation
-
-### 1. Install Homebrew (Package Manager)
-
-```bash
-/bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
-```
-
----
-
-### 2. Install Git
-
-```bash
-brew install git
-```
-
-Verify:
-
-```bash
-git --version
-```
-
----
-
-### 3. Install Python
-
-```bash
-brew install python
-```
-
-Verify:
-
-```bash
-python3 --version
-pip3 --version
-```
-
----
-
-### 4. Install Docker Desktop
-
-Download:
-
-https://www.docker.com/products/docker-desktop/
-
-Verify:
-
-```bash
-docker --version
-```
-
----
-
-### 5. Install Google Cloud CLI
-
-```bash
-brew install --cask google-cloud-sdk
-```
-
-Initialize:
-
-```bash
-gcloud init
-```
-
----
-
-### 6. Install OpenTofu
-
-```bash
-brew install opentofu
-```
-
-Verify:
-
-```bash
-tofu version
-```
-
----
-
-### 7. Install dbt
-
-```bash
-pip3 install dbt-bigquery
-```
-
-Verify:
-
-```bash
-dbt --version
-```
-
----
-
-# 🐧 Linux Installation (Ubuntu / Debian)
-
-### 1. Install Git
-
-```bash
-sudo apt update
-sudo apt install git -y
-```
-
-Verify:
-
-```bash
-git --version
-```
-
----
-
-### 2. Install Python
-
-```bash
-sudo apt install python3 python3-pip python3-venv -y
-```
-
-Verify:
-
-```bash
-python3 --version
-```
-
----
-
-### 3. Install Docker
-
-```bash
-sudo apt install docker.io docker-compose-plugin -y
-```
-
-Start Docker:
-
-```bash
-sudo systemctl enable docker
-sudo systemctl start docker
-```
-
-Verify:
-
-```bash
-docker --version
-```
-
----
-
-### 4. Install Google Cloud CLI
-
-```bash
-curl https://sdk.cloud.google.com | bash
-exec -l $SHELL
-```
-
-Verify:
-
-```bash
-gcloud version
-```
-
----
-
-### 5. Install OpenTofu
-
-```bash
-curl -fsSL https://get.opentofu.org/install-opentofu.sh | sh
-```
-
-Verify:
-
-```bash
-tofu version
-```
-
----
-
-### 6. Install dbt
-
-```bash
-pip3 install dbt-bigquery
-```
-
-Verify:
-
-```bash
-dbt --version
-```
-
----
-
-# ✅ Verify Everything
-
-Run the following commands to ensure everything is installed correctly:
-
-```bash
-git --version
-python --version
-docker --version
-gcloud version
-tofu version
-dbt --version
-```
-
-If all commands return versions, your environment is ready to run the project.
-
-
-## ☁️ Setting Up Your Google Cloud Project
-
-Follow these steps to create a GCP project, link it to billing, enable necessary APIs, and connect it to your local `gcloud` CLI.
-
----
-
-### 1️⃣ Create a New Project
-
-You can create a project either via the **GCP Console** or the **CLI**.
-
-**Using GCP Console:**
-
-1. Go to [Google Cloud Console](https://console.cloud.google.com).
-2. Click **Project Selector → New Project**.
-3. Fill in:
-   - **Project Name:** `f1-data-project`  
-   - **Project ID:** Must be unique globally, e.g., `f1-data-project-43ver`  
-   - **Organization:** Choose **No Organization** for personal projects
-4. Click **Create**.
-
-**Using gcloud CLI:**
-
-```bash
-gcloud projects create f1-data-project-43ver --name="F1 Data Project"
-```
-
----
-
-### 2️⃣ Link a Billing Account
-
-Billing must be enabled to activate most GCP APIs (e.g., BigQuery, Cloud Composer).
-
-**Using GCP Console:**
-
-1. Go to [Billing](https://console.cloud.google.com/billing).
-2. If you don’t have a billing account, click **Add Billing Account** and follow the instructions.
-3. Link the billing account to your project.
-
-**Using gcloud CLI (if you have a billing account):**
-
-```bash
-# List your billing accounts
-gcloud beta billing accounts list
-
-# Link your project to a billing account
-gcloud beta billing projects link f1-data-project-43ver \
-    --billing-account YOUR_BILLING_ACCOUNT_ID
-```
-
-Verify:
-
-```bash
-gcloud beta billing projects describe f1-data-project-43ver
-```
-
----
-
-### 3️⃣ Set the Project in gcloud
-
-After the project is created and billing is linked, set it as your active project:
-
-```bash
-gcloud config set project f1-data-project-43ver
-```
-
----
-
-### 4️⃣ Authenticate Your Local gcloud CLI
-
-**Log in your Google account:**
-
-```bash
-gcloud auth login
-```
-
-**Set Application Default Credentials** (used by Python scripts, dbt, and Airflow):
-
-```bash
 gcloud auth application-default login
+gcloud config set project YOUR_PROJECT_ID
+gcloud services enable bigquery.googleapis.com storage.googleapis.com composer.googleapis.com \
+    iam.googleapis.com cloudresourcemanager.googleapis.com
 ```
 
-**Optional:** Update the quota project to avoid warnings:
+Set your project ID in `opentofu/terraform.tfvars`, then run `tofu init` and `tofu plan` inside `opentofu/`. To load raw files into BigQuery use `scripts/load_raw_to_bigquery.py`.
 
-```bash
-gcloud auth application-default set-quota-project f1-data-project-43ver
-```
+## Git workflow and CI
 
-Verify active project:
+Work on feature branches and open a pull request; do not commit directly to `main`.
 
-```bash
-gcloud config get-value project
-```
+* `.github/workflows/ci.yml` runs on every pull request: Python unit tests, a synthetic-data dbt build with all tests, and the dashboard tests. A BigQuery-emulator comparison job also runs but is advisory.
+* `.github/workflows/deploy_to_composer.yml` is **manual only** (`workflow_dispatch`, dry run by default). It syncs DAGs and plugins to a Cloud Composer bucket through `scripts/deploy_to_composer.sh`.
 
----
+## Repository structure
 
-### 5️⃣ Enable Required APIs
-
-Enable the services needed for your data pipeline:
-
-```bash
-gcloud services enable \
-bigquery.googleapis.com \
-storage.googleapis.com \
-composer.googleapis.com \
-iam.googleapis.com \
-cloudresourcemanager.googleapis.com
-```
-
-These services provide:
-
-| Service | Purpose |
-|--------|---------|
-| **BigQuery** | Data warehouse for analytics |
-| **Cloud Storage (GCS)** | Data lake for raw and processed files |
-| **Cloud Composer** | Managed Airflow environment |
-| **IAM** | Identity and access management |
-| **Cloud Resource Manager** | Manage projects, folders, and organization resources |
-
----
-
-### 6️⃣ Verify Setup
-
-Check your active account and project:
-
-```bash
-gcloud auth list
-gcloud config list
-```
-
-Test access:
-
-```bash
-# List BigQuery datasets
-bq ls
-
-# List GCS buckets
-gsutil ls
-```
-
----
-
-### ✅ Next Steps
-
-Once the project is set up and connected:
-
-1. Run **OpenTofu** to provision your GCP infrastructure (GCS, BigQuery, IAM roles).  
-2. Configure **Airflow**, **dbt**, and other pipeline components.  
-3. Start building and running DAGs and dbt transformations.
-
-
-
-## 🔀 Git Workflow & CI/CD
-
-This project follows the **Feature Branch Workflow** to keep the `main` branch stable.
-
-**Important rule:**  
-🚫 Never commit directly to `main`.
-
-### Development Workflow
-
-1. Create a feature branch
-
-```bash
-git checkout -b feature/your-feature-name
-```
-
-2. Write and test your code locally.
-
-3. Commit your changes
-
-```bash
-git add .
-git commit -m "feat: description of feature"
-```
-
-4. Push your branch to GitHub
-
-```bash
-git push -u origin feature/your-feature-name
-```
-
-5. Open a **Pull Request (PR)** to merge into `main`.
-
-### Automated Deployment
-
-Once the PR is merged into `main`, **GitHub Actions** will automatically run the CI/CD pipeline which:
-
-- Validates the repository
-- Runs deployment scripts
-- Syncs Airflow DAGs and plugins to **Google Cloud Composer**
-- Triggers dbt model execution for transformations
-
----
-
-## 🚀 Current Project Progress
-
-### Completed
-
-- [x] Defined system architecture and target endpoints  
-- [x] Configured local developer environment (Git, Python, Docker, OpenTofu, GCP CLI, dbt)  
-- [x] Generated master directory structure  
-- [x] Mapped out **18 dbt staging models** for full OpenF1 endpoint coverage  
-
-### In Progress / Next Steps
-
-- [ ] Lock in Python dependencies (`requirements.txt`)
-- [ ] Spin up local Airflow (`docker-compose.yaml`)
-- [ ] Provision GCP infrastructure with **OpenTofu**
-- [ ] Implement extraction scripts and Airflow DAGs
-- [ ] Implement dbt transformations
-
-
-## 📂 Repository Structure
-
-The codebase is organized into distinct domains to separate infrastructure, orchestration, and business logic:
-
-For a **README.md**, the cleanest way is to present the directory structure inside a **Markdown code block** so the spacing is preserved. Here’s a properly formatted version:
-
-````markdown
-## Project Structure
 ```text
-This is the directory structure: 
-f1_data_project
-├── .gitignore                          # Ignores raw data, keys, Python cache, and dbt target/ folders
-├── Makefile                            # Shortcuts (e.g., `make up` for Airflow, `make apply` for Tofu)
-├── README.md                           # Project documentation
-│
-├── .github/                            # Automated CI/CD Pipelines
-│   └── workflows/
-│       └── deploy_to_composer.yml      # Automatically syncs Airflow code to GCP on merge to main
-│
-├── scripts/                            # Manual / Helper Scripts
-│   └── deploy_to_composer.sh           # Bash script to manually sync DAGs/Plugins to Composer bucket
-│
-├── opentofu/                           # Infrastructure as Code (GCP Setup)
-│   ├── main.tf                         # Defines GCS (Data Lake) and BigQuery datasets
-│   ├── provider.tf                     # GCP provider configuration for OpenTofu
-│   └── variables.tf                    # GCP Project IDs, region settings, bucket names
-│   
-├── airflow/                            # Open-Source Local Airflow Setup
-│   ├── docker-compose.yaml             # Spins up local Airflow webserver, scheduler, and Postgres
-│   ├── requirements.txt                # Python dependencies (astronomer-cosmos, dbt-bigquery, requests)
-│   │
-│   ├── plugins/
-│   │   └── hooks/
-│   │       └── openf1_hook.py                 # Centralized API connection manager
-│   │
-│   ├── logs/                                  # Local Airflow execution logs
-│   │
-│   └── dags/                                  # Airflow workflows
-│       ├── .airflowignore                     # Tells Airflow scheduler to ignore the modules folder
-│       ├── extract_openf1_dag.py              # Main DAG: Orchestrates modular extraction tasks
-│       ├── dbt_cosmos_dag.py                  # Cosmos DAG: Parses dbt models into Airflow tasks
-│       │
-│       └── modules/                           # Modularized Python Business Logic (Full OpenF1 Coverage)
-│           ├── __init__.py
-│           ├── event_extractor.py             # Functions for: /meetings, /sessions
-│           ├── competitor_extractor.py        # Functions for: /drivers, /championship_drivers, /championship_teams
-│           ├── results_extractor.py           # Functions for: /starting_grid, /session_result
-│           ├── performance_extractor.py       # Functions for: /laps, /pit, /stints, /intervals, /position, /overtakes
-│           ├── telemetry_extractor.py         # Functions for: /car_data, /location, /weather
-│           ├── race_events_extractor.py       # Functions for: /race_control, /team_radio
-│           └── gcs_loader.py                  # Uploads extracted data to Google Cloud Storage
-│
-├── dbt_f1/                                    # dbt Transformation Project
-│   ├── dbt_project.yml
-│   ├── packages.yml
-│   ├── profiles.yml
-│   │
-│   ├── macros/                                # Reusable SQL macros
-│   │
-│   └── models/
-│       ├── staging/                           # Raw → Clean transformations
-│       │   ├── stg_car_data.sql               # Cleans 3.7Hz telemetry data
-│       │   ├── stg_championship_drivers.sql   # Cleans driver standings data
-│       │   ├── stg_championship_teams.sql     # Cleans constructor standings data
-│       │   ├── stg_drivers.sql                # Cleans driver info (names, acronyms, team colors)
-│       │   ├── stg_intervals.sql              # Cleans time gaps between cars and to the leader
-│       │   ├── stg_laps.sql                   # Cleans lap durations, sector times, and speed traps
-│       │   ├── stg_location.sql               # Cleans X, Y, Z coordinates of cars on track
-│       │   ├── stg_meetings.sql               # Cleans overarching event/weekend data
-│       │   ├── stg_overtakes.sql              # Cleans overtaking events and track positions
-│       │   ├── stg_pit.sql                    # Cleans pit lane times and stationary stop durations
-│       │   ├── stg_position.sql               # Cleans running track positions
-│       │   ├── stg_race_control.sql           # Cleans flags, safety cars, and race director messages
-│       │   ├── stg_sessions.sql               # Cleans session data (Practice, Qualifying, Race)
-│       │   ├── stg_session_result.sql         # Cleans final classifications, DNFs, and DSQs
-│       │   ├── stg_starting_grid.sql          # Cleans starting grid positions
-│       │   ├── stg_stints.sql                 # Cleans tyre compound usage and stint lengths
-│       │   ├── stg_team_radio.sql             # Cleans radio recording URLs
-│       │   ├── stg_weather.sql                # Cleans track temperature, rainfall, and wind data
-│       │   └── schema.yml                     # Documentation and data tests (e.g., uniqueness on keys)
-│       │
-│       ├── intermediate/
-│       │   └── int_driver_lap_telemetry.sql   # Combines lap data with telemetry for deeper analysis
-│       │
-│       └── marts/                             # Final analytics-ready tables
-│           ├── dim_drivers.sql                # Driver dimension table
-│           ├── fct_race_performance.sql       # Fact table for race performance analytics
-│           └── schema.yml                     # Documentation and tests for marts
-```
-*********************
-
-Taking a break is a great idea! Stepping away is often the best way to let your brain process everything we just built.
-
-Since you are running Airflow via Docker Compose, shutting it down and spinning it back up is incredibly easy. Your data, your code, and your DAG history are safely stored on your local hard drive, so you won't lose any progress.
-
-Here is your exact cheat sheet for pausing and resuming your project.
-
-🛑 How to Switch Everything Off (Take a Break)
-This command will gracefully stop all your Airflow services (Webserver, Scheduler, Database) and free up your computer's memory.
-
-Open your Git Bash terminal.
-
-Ensure you are inside your Airflow folder (/f/DaTech/f1_data_project/airflow).
-
-Run this command:
-
-Bash
-docker compose down
-You will see a list of containers (like airflow-webserver-1, airflow-scheduler-1, etc.) transition to a "Removed" or "Stopped" state. Once the terminal prompt returns, you are fully shut down! You can safely close your terminal and browser tabs.
-
-🟢 How to Power Everything Back On (Resume Work)
-When you are refreshed and ready to tackle that Red failed task, here is how you bring your environment back to life:
-
-Open a fresh Git Bash terminal.
-
-Navigate back to your Airflow directory:
-
-Bash
-cd /f/DaTech/f1_data_project/airflow
-Run the startup command in "detached" mode (so it runs in the background):
-
-Bash
-docker compose up -d
-Wait about 60 to 90 seconds for the database and webserver to fully boot up.
-
-Open your web browser and go to http://localhost:8080.
-
-Your Airflow UI will be right there waiting for you, exactly how you left it!
-
-Go grab a coffee or relax for a bit. Whenever you boot it back up, just paste those logs from the failed extract_meetings task, and we will pick up exactly where we left off! Enjoy your break!
-
-
-
-1. Navigate to your Project Folder
-Open your Git Bash terminal and go to your main project directory (where your venv folder lives):
-
-Bash
-cd /f/DaTech/f1_data_project
-2. Reactivate the Virtual Environment
-Run this command to wake up your local Python environment:
-
-Bash
-source venv/Scripts/activate
-You should now see (venv) appear at the very beginning of your terminal prompt!
-
-3. Power On Airflow
-Now, move into your Airflow folder and spin up the Docker containers:
-
-Bash
-cd airflow
-docker compose up -d
-(Note: Technically, Docker runs its own isolated Python environment inside the containers, so docker compose will work whether your local venv is active or not. However, keeping your venv active is best practice so your local IDE and any local scripts you write don't throw "missing package" warnings!)
-
----
-
-## What changed in this version
-
-See **docs/ANALYTICS_GUIDE.md** (models, assumptions, verification status, what is still not done) and **docs/CHANGES.md** (file list). Example analyst queries: **docs/example_queries.sql**.
-
-```bash
-make ci-test            # synthetic data -> Python tests + 123 dbt nodes (models, seed, tests) + dashboard tests (no API, no Docker)
-make dashboard          # Streamlit dashboards over your warehouse (F1_DUCKDB_PATH)
-make strategy SESSION=9158          # Monte Carlo strategy ranking
-make semantic-validate  # MetricFlow semantic layer (pip install dbt-metricflow)
-make bq-emulator-test   # same project on BigQuery (emulator) compared table-by-table with DuckDB
+f1_data_project/
+├── .github/workflows/        ci.yml, deploy_to_composer.yml
+├── Makefile
+├── F1_Data_Engineering_Handbook.md
+├── airflow/
+│   ├── Dockerfile            Airflow image with dbt-duckdb and dependencies baked in
+│   ├── docker-compose.yaml
+│   ├── requirements.txt
+│   ├── .env.example
+│   ├── dags/                 extract_openf1_dag.py, dbt_cosmos_dag.py, modules/
+│   ├── plugins/              hooks/openf1_hook.py, slack_alerts.py
+│   └── tests/                extractor, manifest, GCS, radio and BigQuery loader tests
+├── dbt_f1_transformations/
+│   ├── dbt_project.yml, profiles.yml, packages.yml
+│   ├── seeds/                f1_points_system.csv (season-aware)
+│   ├── macros/               portable.sql and export/cleanup macros
+│   ├── models/
+│   │   ├── staging/          19 staging views
+│   │   ├── intermediate/     int_track_status_periods, int_lap_context
+│   │   ├── marts/core/       dim_drivers, dim_driver_session, dim_sessions, dim_circuits
+│   │   ├── marts/analytics/  fct_* marts and dim_session_corners
+│   │   └── semantic/         MetricFlow semantic models and metrics
+│   ├── tests/                24 singular tests plus a generic grain test
+│   └── ci/                   synthetic data generator, semantic check, BigQuery emulator runner
+├── analytics/f1_strategy/    Monte Carlo strategy simulator and its tests
+├── dashboards/               Streamlit app: data.py, charts/, components/, workspaces/
+├── opentofu/                 GCS bucket and BigQuery datasets
+├── scripts/                  deploy_to_composer.sh, load_raw_to_bigquery.py
+└── docs/                     ANALYTICS_GUIDE.md, CHANGES.md, ISSUES_CHECKLIST.md,
+                              example_queries.sql, architecture.mmd
 ```
 
-* **Secrets are no longer in the compose file.** Copy `airflow/.env.example` to `airflow/.env` first.
-* **The Airflow image is now `apache/airflow:2.8.1-python3.11`** (the plain tag is Python 3.8, which current dbt-duckdb does not support).
-* **Paths are parameterised** (`F1_RAW_DATA_PATH`, `F1_DUCKDB_PATH`, `F1_EXPORT_PATH`); the old `F:/...` values remain the defaults for the `dev` target.
-* `dbt build --profiles-dir . --target dev|container|ci|bigquery` (see `dbt_f1_transformations/profiles.yml`).
-* **Not verified**: Docker containers, dbt-inside-Airflow, real BigQuery/GCS/Composer, OpenTofu changes, real speech-to-text, and everything on your real data. The guide has the full table.
+## Dashboards
 
+Navigation is organised by role (Race Engineer, Race Analyst, Race Data Scientist) and race phase (pre-race, during-race replay, post-race), plus a data-coverage page. The warehouse is opened read-only, replays are never presented as live data, and each panel is tagged as measured, derived, estimated, predicted, simulated or historical. See `dashboards/README.md`.
 
+## Verification status
 
-https://betika.com/share/pgrHTq
+`make ci-test` was run on synthetic data and passes: Python unit tests (18 airflow, 12 strategy), 135 dbt nodes (56 models, 1 seed, 78 tests) on DuckDB 1.5.6 and 2.0.0, and 104 dashboard test cases.
+
+Not verified: the Docker containers and dbt inside Airflow, real BigQuery, GCS and Composer, OpenTofu changes, real speech-to-text, and the full pipeline on real data. `docs/ANALYTICS_GUIDE.md` has the full table, and `docs/CHANGES.md` and `docs/ISSUES_CHECKLIST.md` record what real-data runs found and fixed.
+
+## Further reading
+
+* `F1_Data_Engineering_Handbook.md` - the complete build-from-scratch handbook
+* `docs/ANALYTICS_GUIDE.md` - models, assumptions and verification status
+* `docs/example_queries.sql` - example analyst queries

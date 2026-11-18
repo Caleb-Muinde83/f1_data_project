@@ -6,6 +6,8 @@
 
 This book turns the raw build logs of a real project into a **curriculum**. You will start with an empty folder and finish with a working **Formula 1 analytics warehouse**: raw data pulled from the **OpenF1 API** by **Apache Airflow**, stored as **Parquet**, cleaned and modelled by **dbt** inside **DuckDB**, explored with SQL tools, visualised in **Power BI**, and prepared for the cloud with **OpenTofu** on **Google Cloud**.
 
+**This is the second edition of the handbook.** The chapters and the order are unchanged: new material was added *inside* the chapter where it belongs, and a few code blocks were replaced with the current version from the repository. Section **What Changed in This Edition** (just below the chapter map) lists exactly what moved, so you can find the new parts without rereading everything.
+
 Every chapter follows the same rhythm: **why** the technology exists, **what** you will build, **how** to build it step by step, and a **Learner Pitfalls & Troubleshooting** section made of errors that were actually hit while building this project, each with its root cause and fix.
 
 ---
@@ -16,6 +18,7 @@ Every chapter follows the same rhythm: **why** the technology exists, **what** y
 * **Type the commands, read the explanations.** Every code block says which file it belongs to. Every concept is explained the first time it appears.
 * **Do not skip the pitfalls.** They are the most valuable part. Most of the real learning in this project came from things breaking.
 * **Look for the status tags.** Not everything in the project is at the same level of completion. See the next section.
+* **Run the test suite before you change anything.** `make ci-test` builds the whole project on a generated dataset (no API, no Docker) and takes about a minute. Chapter 11 explains it; use it to prove your own copy works before you start editing.
 * **Replace the placeholder path.** Every absolute path uses `F:/DaTech/Production/f1_data_project` as the **project root**. Swap in the absolute path of your own clone (for example `/home/you/f1_data_project` on Linux or macOS).
 
 ---
@@ -29,6 +32,7 @@ This book separates **what the build logs prove** from **what is only scaffolded
 | **[VERIFIED]** | Code was run and the build logs show it working. |
 | **[CODE FINAL, RUN NOT CONFIRMED]** | Code was reviewed and finalised, but the logs do not show a successful end-to-end run. |
 | **[SCAFFOLDED]** | The file or folder exists in the project skeleton, but no working implementation appears in the build logs. |
+| **[VERIFIED ON SYNTHETIC DATA]** | New in this edition. The code builds and passes its tests on a **generated** OpenF1-shaped dataset (`make ci-test`), but has not been proven on real OpenF1 data. |
 | **[ADDED FOR THIS BOOK]** | Not in the build logs. Added to close a gap, and explained where it appears. |
 
 | Layer | Status |
@@ -36,15 +40,26 @@ This book separates **what the build logs prove** from **what is only scaffolded
 | Project skeleton, Git workflow | **[VERIFIED]** |
 | Airflow in Docker, hook, pool, universal extractor | **[VERIFIED]** |
 | Extraction hardening (chunking, backoff, sanitiser, Parquet) | **[VERIFIED]** |
-| dbt + DuckDB: sources, 18 staging models, marts, tests | **[VERIFIED]** (a first clean run of 33 models, later 34 with `fct_tire_strategy`; all data tests passing at the last recorded run) |
+| Extraction additions: run metadata, atomic writes, skip-existing, fan-out guard, manifest, failure alerts | **[VERIFIED ON SYNTHETIC DATA]** (unit tests; DAG parsed with real Airflow 2.10.5; never run in Docker) |
+| dbt + DuckDB: sources, staging, marts, tests | **[VERIFIED]** on real data in the build logs; the current 135-node project (56 models, 1 seed, 78 tests) is **[VERIFIED ON SYNTHETIC DATA]**: `make ci-test` passes on DuckDB 1.5.6 and 2.0.0 |
+| Pit strategy: compound pace model, pit loss, undercut/overcut | **[VERIFIED ON SYNTHETIC DATA]** (also built on real data; see Chapter 6 pitfalls) |
+| Safety-car risk model and the Monte Carlo strategy simulator | **[VERIFIED ON SYNTHETIC DATA]** (the simulator is unit-tested against hand-calculated totals; **not validated against real races**) |
+| Telemetry: ASOF joins, distance axis, derived corners and apex speeds | **[VERIFIED ON SYNTHETIC DATA]** (a full real-data build of `fct_telemetry` took 1 h 25 min: see Chapter 7) |
 | Telemetry export to a partitioned Parquet lake | **[VERIFIED]** (a 43 minute export) |
-| Harlequin, DBeaver, Power BI over ODBC (16 tables) | **[VERIFIED]** |
-| dbt triggered from inside Airflow (`run_dbt_telemetry`) | **[CODE FINAL, RUN NOT CONFIRMED]** |
+| Team radio transcription (faster-whisper) and `fct_radio_messages` | **[CODE FINAL, RUN NOT CONFIRMED]** (logic unit-tested with a fake model; real speech-to-text never run) |
+| Harlequin, DBeaver, Power BI over ODBC (16 mart tables in the first-edition build) | **[VERIFIED]** |
+| Streamlit dashboards | **[VERIFIED ON SYNTHETIC DATA]** (104 headless tests; `docs/CHANGES.md` records further fixes made after running the pages on real data) |
+| MetricFlow semantic layer (7 semantic models, 22 metrics) | **[VERIFIED ON SYNTHETIC DATA]** (config validation plus 7 metrics cross-checked against hand-written SQL) |
+| dbt triggered from inside Airflow (`run_dbt_build`) | **[CODE FINAL, RUN NOT CONFIRMED]** |
 | OpenTofu: `tofu init` and `tofu plan` for a GCS bucket | **[VERIFIED]** |
-| OpenTofu: `tofu apply`, BigQuery datasets | **[SCAFFOLDED]** |
-| Cosmos DAG, `gcs_loader.py`, `deploy_to_composer.sh`, CI/CD workflow, Cloud Composer | **[SCAFFOLDED]** |
+| OpenTofu: BigQuery datasets | **[CODE FINAL, RUN NOT CONFIRMED]** (no `tofu` binary was available to validate it) |
+| BigQuery: portable SQL, raw loader, `dbt-bigquery` target | **[VERIFIED ON SYNTHETIC DATA]** on the BigQuery **emulator**: all 56 tables identical to DuckDB, as of that run. The repository's `docs/CHANGES.md` records later model changes for which `make bq-emulator-test` has not been re-run. Real BigQuery, and incremental re-runs, are untested |
+| `gcs_loader.py`, `deploy_to_composer.sh`, Cosmos DAG, CI workflows | **[CODE FINAL, RUN NOT CONFIRMED]** (the main CI workflow's steps were run locally; the GitHub Actions runs themselves were not) |
+| Cloud Composer environment | **[SCAFFOLDED]** |
 
-> **Honest note on the title.** The warehouse that actually runs today is **local** (DuckDB). The cloud half of the architecture is designed and scaffolded, and Chapter 10 shows the one cloud step that was executed. Treat the cloud chapters as the **launch pad for your own migration**, not as a finished deployment.
+> **Honest note on the title.** The warehouse that actually runs today is **local** (DuckDB). Chapter 10 now also contains a **BigQuery port** of the whole project, verified table-for-table against DuckDB on a BigQuery *emulator*, but no real cloud warehouse was deployed. Treat the cloud chapters as the **launch pad for your own migration**, not as a finished deployment.
+
+> **How the real-data runs fit in.** The core models were also built on the author's real OpenF1 data. Those runs found defects in the first version of this edition's code, each described as a pitfall where it happened: DuckDB 1.5's `INTEGER`/`BIGINT` optimizer crash and `temp_directory` re-set after a spill (Chapter 5), overlapping stints duplicating laps and practice garage visits counted as pit stops (Chapter 6). Later real-data rounds (sprints, starting grids, race trace, VSC periods, served penalties, telemetry lap windows, the dashboards) are listed in the repository's `docs/CHANGES.md` and `docs/ISSUES_CHECKLIST.md`, and the code in this book is the repository's code for them. The code was re-verified for this edition by running `make ci-test` on synthetic data; it has not been re-run on the real data.
 
 ---
 
@@ -55,23 +70,26 @@ This book separates **what the build logs prove** from **what is only scaffolded
           |
           |  HTTP + JSON      (rate limits, 422/429/404 handling)
           v
-  Apache Airflow (Docker)  ----  Hook -> Universal Extractor -> Dynamic Task Mapping
-          |
+  Apache Airflow (Docker)  ----  Hook -> Universal Extractor -> Dynamic Task Mapping -> run manifest
+          |                       \--(opt-in)--> faster-whisper: team radio audio -> transcripts
           |  Parquet files (snappy compressed)
           v
   Local data lake   airflow/data/raw/<endpoint>_<session>_extracted.parquet
-          |
+          |                       \--(opt-in)--> scripts/load_raw_to_bigquery.py -> BigQuery f1_raw
           |  DuckDB reads Parquet directly  (the "Load" in ELT)
           v
-  dbt + DuckDB      sources -> staging (18 views) -> marts (dim_ + fct_ tables)
-          |                                   \
-          |                                    \--> fct_telemetry -> partitioned Parquet export
+  dbt + DuckDB      sources -> staging (views) -> intermediate (int_lap_context) -> marts (dim_ + fct_ tables)
+          |             |                                   \
+          |             |                                    \--> fct_telemetry -> distance trace -> detected corners
+          |             \--> pit strategy, safety-car risk, strategy simulator (Python), radio
           v
-  f1_local_warehouse.duckdb
+  f1_local_warehouse.duckdb   (the same project also builds on BigQuery: --target bigquery)
           |
           +--> Harlequin / DBeaver / SQLTools   (explore with SQL)
           +--> Power BI via DuckDB ODBC         (dashboards)
-          +--> OpenTofu -> GCS bucket           (cloud launch pad)
+          +--> Streamlit dashboards             (race overview, pace, strategy, telemetry, safety car, radio)
+          +--> MetricFlow semantic layer        (22 governed metrics)
+          +--> OpenTofu -> GCS bucket + BigQuery datasets   (cloud launch pad)
 ```
 
 ## **The Tech Stack and Why Each Piece Exists**
@@ -87,23 +105,48 @@ This book separates **what the build logs prove** from **what is only scaffolded
 | **Power BI** | Visualisation | Dashboards over a star schema |
 | **OpenTofu (open-source Terraform)** | Infrastructure as Code | Reproducible cloud resources |
 | **Git + GitHub** | Version control, workflow | Branch, review, merge |
+| **pytest** | Unit tests for Python code | Fast tests that need no API, Docker or cloud |
+| **NumPy** | Monte Carlo strategy simulator | Vectorised simulation of thousands of races |
+| **faster-whisper** | Optional radio transcription | Self-hosted speech-to-text, in keeping with the project's no-managed-services stance |
+| **Streamlit + Plotly** | Interactive dashboards | Python-only, reads DuckDB directly |
+| **MetricFlow** | Semantic layer | One governed definition per metric |
+| **BigQuery (+ emulator)** | Optional cloud warehouse | The project's SQL is portable; the emulator makes that testable without credentials |
 
 ## **Chapter Map**
 
 1. Project Set Up and Initialization
-2. Local Orchestration and API Extraction (Airflow and Docker)
-3. Hardening the Extraction Pipeline
+2. Local Orchestration and API Extraction (Airflow and Docker) *(now with secrets in `.env` and dbt mounted)*
+3. Hardening the Extraction Pipeline *(now with run metadata, atomic writes, a fan-out guard and a manifest)*
 4. Data Modelling Concepts: ELT, Layers, Joins and the Star Schema
-5. Data Transformation I: dbt, DuckDB and the Staging Layer
-6. Data Transformation II: Building the Analytical Marts
-7. Taming High-Volume Telemetry
-8. Closing the Loop: Running dbt From Airflow
-9. Serving the Data: SQL Tools and Power BI
-10. Infrastructure as Code (OpenTofu and GCP)
-11. Professional Workflow: Git and CI/CD
+5. Data Transformation I: dbt, DuckDB and the Staging Layer *(now with environment-driven profiles and a DuckDB 1.5 pitfall)*
+6. Data Transformation II: Building the Analytical Marts *(now with the lap-context layer, pit strategy, safety-car risk and the strategy simulator)*
+7. Taming High-Volume Telemetry *(now with the distance axis and derived corners)*
+8. Closing the Loop: Running dbt From Airflow *(now implemented)*
+9. Serving the Data: SQL Tools, Power BI, Dashboards and the Semantic Layer
+10. Infrastructure as Code (OpenTofu and GCP) *(now with the BigQuery port)*
+11. Professional Workflow: Git, CI/CD and Testing Everything
 12. Operations and Troubleshooting Playbook
 
 Appendices: **A** Final directory tree, **B** the 18 OpenF1 endpoints, **C** glossary.
+
+## **What Changed in This Edition**
+
+If you already worked through the first edition, this is where to look. Nothing was renumbered.
+
+| Chapter | What was added or replaced |
+|---|---|
+| 1 | Skeleton gains `analytics/`, `dashboards/`, `seeds/`, `tests/`, `ci/` and `docs/`; `.gitignore` additions |
+| 2 | `docker-compose.yaml` replaced: secrets from `.env`, a `Dockerfile` (Python 3.11 image with dbt, `pyarrow` and `faster-whisper` baked in), resource limits, dbt project and warehouse mounted. New pitfalls |
+| 3 | Extractor and DAG replaced (run metadata, atomic writes, skip-existing, guards, manifest, Slack failure alerts, opt-in dbt/GCS/radio tasks). New Tasks 4 and 5 |
+| 5 | `profiles.yml` moves into the project with several targets; sources read an environment path; staging models updated (lap start time, interval timestamps, overtake time) and a radio staging model added. New pitfalls: DuckDB 1.5, `temp_directory` |
+| 6 | New intermediate layer (`int_lap_context`); marts replaced and extended (season-aware points, sprint handling, grid mapping, served-penalty handling); new Tasks: pit strategy, safety-car risk, the strategy simulator, radio messages. New pitfalls: overlapping stints, practice pit stops |
+| 7 | `fct_telemetry` replaced (portable ASOF, lap window, `telemetry_only_sessions`); new Tasks: distance axis, per-lap KPIs, derived corners and apex speeds. New pitfalls |
+| 8 | dbt-inside-Airflow is now implemented rather than described as a to-do |
+| 9 | New Tasks 5 and 6: role-based Streamlit dashboards and the MetricFlow semantic layer |
+| 10 | OpenTofu gains BigQuery datasets; **the planned cloud steps are replaced by the BigQuery port** (Tasks 4 to 7) |
+| 11 | The CI/CD sketch is replaced by the real workflows; new Task 3 runs every test locally |
+| 12 | Start-up, run order and error index updated |
+| Appendices | Directory tree updated; glossary gains the new terms |
 
 ---
 
@@ -201,20 +244,20 @@ From the project root, run the script below. It creates every folder and blank f
 # 1. Root-level files
 touch .gitignore Makefile README.md
 
-# 2. CI/CD workflow  [SCAFFOLDED]
+# 2. CI/CD workflows (Chapter 11)
 mkdir -p .github/workflows
 touch .github/workflows/deploy_to_composer.yml
 
 # 3. Airflow
-mkdir -p airflow/dags/modules airflow/logs airflow/plugins/hooks airflow/data/raw
-touch airflow/docker-compose.yaml airflow/requirements.txt
+mkdir -p airflow/dags/modules airflow/plugins/hooks airflow/data/raw
+touch airflow/docker-compose.yaml airflow/requirements.txt airflow/Dockerfile
 touch airflow/plugins/__init__.py airflow/plugins/hooks/__init__.py
-touch airflow/plugins/hooks/openf1_hook.py
+touch airflow/plugins/hooks/openf1_hook.py airflow/plugins/slack_alerts.py
 touch airflow/dags/.airflowignore airflow/dags/extract_openf1_dag.py
-touch airflow/dags/dbt_cosmos_dag.py                      # [SCAFFOLDED]
+touch airflow/dags/dbt_cosmos_dag.py                      # Chapter 8 (optional)
 touch airflow/dags/modules/universal_extractor.py
 touch airflow/dags/modules/event_extractor.py
-touch airflow/dags/modules/gcs_loader.py                  # [SCAFFOLDED]
+touch airflow/dags/modules/gcs_loader.py                  # Chapter 10
 
 # 4. dbt project (filled in during Chapter 5)
 mkdir -p dbt_f1_transformations/macros
@@ -229,22 +272,33 @@ touch opentofu/main.tf opentofu/provider.tf opentofu/variables.tf opentofu/terra
 
 # 6. Helper scripts
 mkdir -p scripts
-touch scripts/deploy_to_composer.sh                       # [SCAFFOLDED]
+touch scripts/deploy_to_composer.sh
 chmod +x scripts/deploy_to_composer.sh
+touch scripts/load_raw_to_bigquery.py                     # Chapter 10
+
+# 7. Added in the second edition: analytics, dashboards, tests, CI helpers, docs
+mkdir -p analytics/f1_strategy analytics/tests            # Chapter 6: strategy simulator
+mkdir -p dashboards/f1_dash dashboards/tests              # Chapter 9 (f1_dash grows charts/, components/ and workspaces/)
+mkdir -p airflow/tests                                    # Chapter 3
+mkdir -p dbt_f1_transformations/seeds dbt_f1_transformations/tests/generic
+mkdir -p dbt_f1_transformations/ci dbt_f1_transformations/models/semantic
+mkdir -p docs
+touch airflow/.env.example
 
 echo "F1 Data Project directory structure created successfully!"
 ```
 
 The full resulting tree, with a note on what goes where, is in **Appendix A**.
 
-**Edit your `.gitignore` now.** Raw Parquet files, the DuckDB warehouse and dbt build artefacts are large and re-creatable. Keep them out of Git:
+**Edit your `.gitignore` now.** Raw Parquet files, the DuckDB warehouse and dbt build artefacts are large and re-creatable, and `airflow/.env` (introduced in Chapter 2) holds passwords. Keep them all out of Git:
 
 ```gitignore
 venv/
 .venv/
-airflow/logs/
 airflow/data/
+airflow/.env
 output/
+.ci_raw/
 *.duckdb
 *.duckdb.wal
 .duckdb_tmp/
@@ -308,7 +362,7 @@ In this chapter you will build the **heart of the pipeline**: a local **Apache A
 
 #### **Task 1: Configure the Airflow Environment**
 
-We run Airflow inside Docker so that your laptop looks like the cloud environment you will deploy to later. Three files do the work: **requirements.txt**, **docker-compose.yaml**, and the DAG.
+We run Airflow inside Docker so that your laptop looks like the cloud environment you will deploy to later. Four files do the work: **requirements.txt**, the **Dockerfile**, **docker-compose.yaml**, and the DAG.
 
 **Step 1: Declare the dependencies**
 
@@ -317,38 +371,109 @@ Open **airflow/requirements.txt** and add:
 ```text
 apache-airflow-providers-google==10.12.0
 requests==2.31.0
+pyarrow
+faster-whisper
 ```
 
-> **Correction to earlier drafts.** The original file also pinned `pandas==2.1.4`. Pandas 2.1 requires Python 3.9 or newer, while the `apache/airflow:2.8.1` image runs **Python 3.8** (you can see `python3.8` in its log paths). The pandas pin was never exercised, because the compose file only **mounts** this file into the container; nothing runs `pip install` on it. The extractor in this book does not use pandas, so it was removed.
+> **Correction to earlier drafts.** The original file also pinned `pandas==2.1.4`. Pandas 2.1 requires Python 3.9 or newer, while the `apache/airflow:2.8.1` image runs **Python 3.8** (you can see `python3.8` in its log paths). The pandas pin was never exercised, because the first edition's compose file only **mounted** this file into the container; nothing ran `pip install` on it. The extractor in this book does not use pandas, so it was removed.
+>
+> **Second edition.** `pyarrow` is now listed because the extractor imports it, and `faster-whisper` because the optional radio-transcription task uses it. The **Dockerfile** below installs this file into the image, so nothing is installed when a container starts.
 
-**Step 2: Configure local Airflow (Docker Compose)**
+**Step 1b: Bake the dependencies into an image (the Dockerfile)**
+
+Open **airflow/Dockerfile** and paste:
+
+```dockerfile
+FROM apache/airflow:2.8.1-python3.11
+
+COPY requirements.txt /requirements.txt
+
+RUN pip install --no-cache-dir -r /requirements.txt "dbt-duckdb>=1.10,<2" \
+    && python -c "from faster_whisper import WhisperModel; WhisperModel('small.en', device='cpu', compute_type='int8')"
+```
+
+It starts from the official Airflow image on **Python 3.11**, installs `requirements.txt` plus `dbt-duckdb`, and downloads the `small.en` speech-to-text model once, at build time, so the first transcription does not have to. The compose file builds this image (`build: .`).
+
+**Step 2a: Create your `.env` file (new in the second edition)**
+
+The first edition shipped the database password, the Airflow login and a default secret directly inside the compose file. Anyone with a copy of the repository had them. The compose file now **refuses to start** until you supply them yourself, from a file Git ignores:
+
+```bash
+cp airflow/.env.example airflow/.env
+```
+
+Open **airflow/.env** and fill in the passwords. Generate the two keys with Python:
+
+```bash
+python -c "import secrets; print(secrets.token_hex(32))"                              # AIRFLOW_WEBSERVER_SECRET_KEY
+python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"   # AIRFLOW_FERNET_KEY (optional)
+```
+
+```bash
+# Copy to airflow/.env (git-ignored) and fill in. docker compose refuses to start while required values are missing.
+AIRFLOW_UID=50000
+POSTGRES_PASSWORD=change-me
+AIRFLOW_ADMIN_USER=airflow
+AIRFLOW_ADMIN_PASSWORD=change-me-too
+# python -c "import secrets; print(secrets.token_hex(32))"
+AIRFLOW_WEBSERVER_SECRET_KEY=
+# python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
+AIRFLOW_FERNET_KEY=
+# Optional
+GCS_RAW_BUCKET=
+ALERT_WEBHOOK_URL=
+```
+
+**Step 2b: Configure local Airflow (Docker Compose)**
 
 Open **airflow/docker-compose.yaml** and paste the following. It is a streamlined version of the official Apache Airflow Compose setup, trimmed for a laptop: a **LocalExecutor**, one **PostgreSQL** database, an **init** job that creates the database tables and the login user, a **webserver** and a **scheduler**.
 
 ```yaml
 x-airflow-common:
   &airflow-common
-  image: ${AIRFLOW_IMAGE_NAME:-apache/airflow:2.8.1}
+  build: .
   environment:
     &airflow-common-env
     AIRFLOW__CORE__EXECUTOR: LocalExecutor
-    AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://airflow:airflow@postgres/airflow
+    AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://${POSTGRES_USER:-airflow}:${POSTGRES_PASSWORD:?copy .env.example to .env and set POSTGRES_PASSWORD}@postgres/airflow
     AIRFLOW__CORE__LOAD_EXAMPLES: 'false'
+    AIRFLOW__CORE__FERNET_KEY: ${AIRFLOW_FERNET_KEY:-}
+    AIRFLOW__WEBSERVER__SECRET_KEY: ${AIRFLOW_WEBSERVER_SECRET_KEY:?set AIRFLOW_WEBSERVER_SECRET_KEY in .env}
+    AIRFLOW__CORE__PARALLELISM: '2'
+    AIRFLOW__CORE__MAX_ACTIVE_TASKS_PER_DAG: '1'
+    AIRFLOW__CORE__DAG_FILE_PROCESSOR_TIMEOUT: '180'
+    AIRFLOW__CORE__DAGBAG_IMPORT_TIMEOUT: '120'
+    AIRFLOW__SCHEDULER__SCHEDULER_HEALTH_CHECK_THRESHOLD: '60'
+    OMP_NUM_THREADS: '2'
+    MKL_NUM_THREADS: '2'
+    _PIP_ADDITIONAL_REQUIREMENTS: ''
+    # Where dbt, DuckDB and the pipeline look for things INSIDE the container
+    DBT_PROJECT_DIR: /opt/airflow/dbt/f1_data_project
+    DBT_PROFILES_DIR: /opt/airflow/dbt/f1_data_project
+    DBT_TARGET: container
+    F1_RAW_DATA_PATH: /opt/airflow/data/raw
+    F1_DUCKDB_PATH: /opt/airflow/data/warehouse/f1_local_warehouse.duckdb
+    F1_EXPORT_PATH: /opt/airflow/data/export/telemetry
+    OPENF1_OUTPUT_PATH: /opt/airflow/data/raw
+    GCS_RAW_BUCKET: ${GCS_RAW_BUCKET:-}
+    ALERT_WEBHOOK_URL: ${ALERT_WEBHOOK_URL:-}
   volumes:
     - ./dags:/opt/airflow/dags
-    - ./logs:/opt/airflow/logs
+    - airflow-logs:/opt/airflow/logs
     - ./plugins:/opt/airflow/plugins
-    - ./requirements.txt:/opt/airflow/requirements.txt
     - ./data:/opt/airflow/data
+    - ../dbt_f1_transformations:/opt/airflow/dbt/f1_data_project
   user: "${AIRFLOW_UID:-50000}:0"
 
 services:
   postgres:
     image: postgres:13
     environment:
-      POSTGRES_USER: airflow
-      POSTGRES_PASSWORD: airflow
+      POSTGRES_USER: ${POSTGRES_USER:-airflow}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?copy .env.example to .env and set POSTGRES_PASSWORD}
       POSTGRES_DB: airflow
+    volumes:
+      - postgres-db-volume:/var/lib/postgresql/data
     healthcheck:
       test: ["CMD", "pg_isready", "-U", "airflow"]
       interval: 10s
@@ -361,8 +486,8 @@ services:
       <<: *airflow-common-env
       _AIRFLOW_DB_UPGRADE: 'true'
       _AIRFLOW_WWW_USER_CREATE: 'true'
-      _AIRFLOW_WWW_USER_USERNAME: airflow
-      _AIRFLOW_WWW_USER_PASSWORD: airflow
+      _AIRFLOW_WWW_USER_USERNAME: ${AIRFLOW_ADMIN_USER:-airflow}
+      _AIRFLOW_WWW_USER_PASSWORD: ${AIRFLOW_ADMIN_PASSWORD:?copy .env.example to .env and set AIRFLOW_ADMIN_PASSWORD}
     depends_on:
       postgres:
         condition: service_healthy
@@ -371,7 +496,7 @@ services:
     <<: *airflow-common
     command: webserver
     ports:
-      - "8080:8080"
+      - "127.0.0.1:8080:8080"
     depends_on:
       airflow-init:
         condition: service_completed_successfully
@@ -382,6 +507,10 @@ services:
     depends_on:
       airflow-init:
         condition: service_completed_successfully
+
+volumes:
+  postgres-db-volume:
+  airflow-logs:
 ```
 
 **Read the file like an engineer**
@@ -390,6 +519,13 @@ services:
 * **`volumes`:** the **file bridge**. `./dags:/opt/airflow/dags` makes your local `dags` folder appear *inside* the container. Edit a file in VS Code and the container sees it instantly, with no rebuild. `./data:/opt/airflow/data` is where Parquet files will land (Chapter 3).
 * **`depends_on` with `condition`:** enforces boot order. Postgres must be **healthy**, then `airflow-init` must **complete successfully**, and only then do the webserver and scheduler start.
 * **No `version:` line.** Newer Docker Compose prints a warning that the `version` attribute is obsolete, so it is omitted here.
+* **`${POSTGRES_PASSWORD:?message}`:** the `:?` makes Compose **stop with your message** if the variable is empty, instead of silently starting with a blank or default password. `${AIRFLOW_UID:-50000}` (with `:-`) means "use this default if unset".
+* **`build: .`:** every Airflow service is built from the `airflow/Dockerfile` above, which starts from `apache/airflow:2.8.1-python3.11`. The plain `2.8.1` tag runs **Python 3.8**, and current `dbt-duckdb` does not install on it (see the pitfall below). The `-python3.11` tag is the same Airflow on a newer Python.
+* **`_PIP_ADDITIONAL_REQUIREMENTS: ''`:** a feature of the official image that runs `pip install` on every container start. It is left empty on purpose: the packages are baked into the image by the Dockerfile, so containers start quickly.
+* **The resource limits:** `AIRFLOW__CORE__PARALLELISM: '2'` and `AIRFLOW__CORE__MAX_ACTIVE_TASKS_PER_DAG: '1'` cap how many tasks run at once, `OMP_NUM_THREADS` and `MKL_NUM_THREADS` cap the threads each task may use, and the two timeouts give the scheduler longer to parse the DAG file. They keep a laptop usable while the extraction runs.
+* **`airflow-logs`:** the logs live in a **named Docker volume**, not in a folder of your repository. `plugins/slack_alerts.py` (Chapter 3) reads the failed task's log from there.
+* **The dbt and data mounts:** `../dbt_f1_transformations` appears inside the container at `/opt/airflow/dbt/f1_data_project`, and `./data` at `/opt/airflow/data`. The `DBT_*`, `F1_*` and `OPENF1_OUTPUT_PATH` variables tell dbt, DuckDB and the extractor where things are **inside the container** (Chapter 8 uses them).
+* **`127.0.0.1:8080:8080`:** the web UI is bound to your own machine only. Without the `127.0.0.1:` prefix Docker publishes it on every network interface.
 
 **Step 3: Write the DAG skeleton**
 
@@ -466,7 +602,7 @@ docker compose up -d
 The first run downloads the PostgreSQL and Airflow images and can take **2 to 5 minutes**. When your prompt returns:
 
 1. Open **http://localhost:8080**.
-2. Log in with **Username `airflow`** and **Password `airflow`**.
+2. Log in with the **`AIRFLOW_ADMIN_USER`** and **`AIRFLOW_ADMIN_PASSWORD`** you set in `airflow/.env`.
 3. Find **extract_openf1_data**, **unpause** it (the toggle on the left), then click **Play** and **Trigger DAG**.
 
 When every task square turns **green**, you have a working orchestrator.
@@ -582,7 +718,7 @@ In **extract_openf1_dag.py**, replace the `extract_placeholder` task with a task
 
 **Step 4: Test the live extraction**
 
-Because `./dags` is mounted, you do **not** need to restart Docker. Trigger the DAG again, wait for **extract_meetings** to turn green, then look in **airflow/logs/** on your machine for **meetings_2023.json**.
+Because `./dags` is mounted, you do **not** need to restart Docker. Trigger the DAG again, wait for **extract_meetings** to turn green, then look inside the container for **meetings_2023.json**: `docker compose exec airflow-scheduler ls /opt/airflow/logs` (the logs folder is a Docker volume, so it does not appear in your project folder).
 
 
 #### **Task 3: Throttle the API with an Airflow Pool**
@@ -725,7 +861,7 @@ def extract_openf1_dag():
 dag_instance = extract_openf1_dag()
 ```
 
-Trigger the DAG. Two tasks run at a time, the rest wait, and eighteen JSON files appear in **airflow/logs/**.
+Trigger the DAG. Two tasks run at a time, the rest wait, and eighteen JSON files appear in **/opt/airflow/logs** inside the container (`docker compose exec airflow-scheduler ls /opt/airflow/logs`).
 
 #### **Task 5: See What Airflow Is Doing**
 
@@ -783,6 +919,7 @@ You rarely need this just to read task logs. The Airflow UI already collects the
 cd airflow
 docker compose down      # stop everything (data in Postgres is kept in the container volume)
 docker compose up -d     # start again
+docker compose up -d --build   # rebuild the image first after changing requirements.txt or the Dockerfile
 ```
 
 Re-activate your venv in a new terminal with `source venv/Scripts/activate` before running Python or dbt commands.
@@ -821,6 +958,14 @@ Re-activate your venv in a new terminal with `source venv/Scripts/activate` befo
 * **Why it Happens:** these endpoints are in beta and lack older historical data.
 * **The Solution:** use `session_key: "latest"` for them, or target recent sessions.
 
+* **The Problem (second edition):** `docker compose up` is expected to stop immediately with `required variable POSTGRES_PASSWORD is missing a value: copy .env.example to .env and set POSTGRES_PASSWORD`.
+* **Why it Happens:** that is the `:?` guard working as designed. The compose file no longer contains any password.
+* **The Solution:** create `airflow/.env` from `airflow/.env.example` (Step 2a). Run `docker compose` from the `airflow/` folder, because that is where Compose looks for `.env`.
+
+* **The Problem (anticipated, not an error anyone recorded):** installing `dbt-duckdb` into the container fails because no release supports the container's Python.
+* **Why it Happens (an inference):** the default `apache/airflow:2.8.1` image runs **Python 3.8** (visible as `python3.8` in its file paths in the build logs), and `dbt-duckdb` 1.10 needs a newer Python. This was reasoned from the version requirements, not reproduced inside Docker.
+* **The Solution:** use the `-python3.11` image tag, as the Dockerfile above does (`FROM apache/airflow:2.8.1-python3.11`). If you change the `FROM` line, keep a tag with Python 3.9 or newer.
+
 ---
 
 
@@ -836,7 +981,11 @@ The v1 pipeline from Chapter 2 works, but only for **one hard-coded session** an
 * **Dynamic Task Mapping (`.expand()`):** Airflow creates **one task instance per item in a list that is only known at runtime**. If the list has 25 session keys, you get 25 parallel tasks without writing 25 tasks.
 * **Exponential backoff:** after a rate-limit error, wait a little, then longer on each retry (30 s, then 60 s) instead of hammering the server.
 * **Idempotency:** running the same job twice gives the same result. Files are named by endpoint **and** session key, so re-running overwrites rather than duplicates.
-* **Fan-out guard:** a cap on how many mapped tasks a single run is allowed to create.
+* **Fan-out guard (now configurable):** with `all`, the full session history would create thousands of mapped tasks. Three parameters control it: `min_session_key` (only sessions at or above this key; the first edition hard-coded 9000), `max_sessions` (default 150) and `allow_large_backfill`. If more sessions would be extracted than `max_sessions`, the task **fails immediately with a message that names the fix** instead of quietly fanning out; tick `allow_large_backfill` only when you mean it.
+* **`skip_existing`, `run_dbt_build`, `upload_to_gcs`, `transcribe_radio`:** four more parameters, all default off. They appear in the trigger form with a description each.
+* **Retries and timeouts:** `retry_exponential_backoff` (3 minutes, then 6, up to 30) gives a rate-limited API time to recover, and `execution_timeout` (3 hours) stops one hung HTTP call from holding a pool slot forever.
+* **`on_failure_callback`:** the DAG imports `send_slack_failure_alert` from `plugins/slack_alerts.py`. Once a task has used up its retries it posts a Slack message with the DAG, task, run id, attempt, exception and the tail of the task log, if `ALERT_WEBHOOK_URL` is set (Task 4).
+* **`verify_and_load` now writes a manifest:** a JSON audit of the run (Task 4).
 
 ### **Prerequisites**
 
@@ -857,7 +1006,7 @@ import json
 import pyarrow as pa
 import pyarrow.parquet as pq
 from collections import defaultdict
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from hooks.openf1_hook import OpenF1Hook
 
 def sanitize_mixed_and_nested_columns(records):
@@ -886,9 +1035,18 @@ def sanitize_mixed_and_nested_columns(records):
                     row[col] = str(row[col])
     return records
 
-def extract_and_save_endpoint(endpoint: str, target_session="latest", api_params: dict = None, is_global: bool = False):
+def build_output_path(endpoint: str, session_val) -> str:
+    """Deterministic file name: re-running the same endpoint+session overwrites instead of duplicating (idempotent)."""
+    base_path = os.getenv("OPENF1_OUTPUT_PATH", "/opt/airflow/data/raw")
+    return f"{base_path}/{endpoint}_{session_val}_extracted.parquet"
+
+
+def extract_and_save_endpoint(endpoint: str, target_session="latest", api_params: dict = None, is_global: bool = False,
+                              skip_existing: bool = False, run_id: str = None):
     """
     Universally pulls data from any OpenF1 endpoint. 
+    skip_existing: return the existing file untouched when it is already on disk (cheap incremental backfills).
+    run_id: optional orchestrator run id, stamped into every row as _airflow_run_id for lineage/audit.
     Handles dynamic routing, 422/429 protection, strict-typing sanitization, Parquet conversion,
     and fallback Time-Window chunking for ultra-dense data.
     """
@@ -914,6 +1072,15 @@ def extract_and_save_endpoint(endpoint: str, target_session="latest", api_params
                 params['session_key'] = session_val
         except Exception as e:
             logging.warning(f"Could not resolve 'latest' session: {e}")
+
+    # ==========================================
+    # SKIP FILES THAT ALREADY EXIST (opt-in)
+    # ==========================================
+    if skip_existing and str(session_val).isdigit():
+        existing = build_output_path(endpoint, session_val)
+        if os.path.exists(existing):
+            logging.info(f"skip_existing=True and {existing} already exists. Skipping /{endpoint} for session {session_val}.")
+            return existing
 
     # ==========================================
     # ULTRA-HEAVY ENDPOINT PROTECTION & RETRIES
@@ -1066,19 +1233,29 @@ def extract_and_save_endpoint(endpoint: str, target_session="latest", api_params
     # ==========================================
     records = sanitize_mixed_and_nested_columns(records)
 
-    base_path = os.getenv("OPENF1_OUTPUT_PATH", "/opt/airflow/data/raw")
-    os.makedirs(base_path, exist_ok=True)
-    
-    output_path = f"{base_path}/{endpoint}_{session_val}_extracted.parquet"
-    
+    # Extraction metadata: lets you audit when/why a file was produced and reconcile row counts later
+    extracted_at = datetime.now(timezone.utc).isoformat(timespec="seconds")
+    for row in records:
+        row["_extracted_at_utc"] = extracted_at
+        row["_source_endpoint"] = endpoint
+        row["_airflow_run_id"] = run_id
+
+    output_path = build_output_path(endpoint, session_val)
+    os.makedirs(os.path.dirname(output_path), exist_ok=True)
+
+    # Write to a temp file then rename, so a crash mid-write can never leave a truncated Parquet file
+    # that dbt would later try to read.
+    tmp_path = output_path + ".tmp"
     try:
         table = pa.Table.from_pylist(records)
-        # POLISH ADDED: Re-enabled snappy compression to optimize storage performance
-        pq.write_table(table, output_path, compression='snappy')
+        pq.write_table(table, tmp_path, compression='snappy')
+        os.replace(tmp_path, output_path)
         logging.info(f"Success! Saved {len(records)} records to {output_path}")
         return output_path
     except Exception as e:
         logging.error(f"Failed to save Parquet file for {endpoint}: {str(e)}")
+        if os.path.exists(tmp_path):
+            os.remove(tmp_path)
         raise e
 ```
 
@@ -1092,7 +1269,10 @@ def extract_and_save_endpoint(endpoint: str, target_session="latest", api_params
    * **422:** the request was too large. Switch to **time-window chunking**: ask for 15-minute slices (`date>=` and `date<` filters) between the session start and end.
    * **429:** rate limited. Wait 30 s, then 60 s, then give up.
    * **Anything else:** raise, so Airflow's own retries take over.
-5. **Writing the file:** the output is `{endpoint}_{session}_extracted.parquet` in `/opt/airflow/data/raw` (overridable through the `OPENF1_OUTPUT_PATH` environment variable), compressed with snappy.
+5. **Run metadata (new in the second edition):** every row gets three extra columns, `_extracted_at_utc`, `_source_endpoint` and `_airflow_run_id`. When a number in the warehouse looks wrong you can trace it to the exact run and moment that produced it. dbt ignores the columns it does not select.
+6. **Skipping files that already exist (`skip_existing`):** with the DAG parameter switched on, a numeric session whose file is already on disk is returned untouched and **no API call is made**. This makes a large backfill resumable. It is deliberately off by default, and it never applies to `latest`, whose data is still changing.
+7. **Atomic writes:** the Parquet file is written to `<name>.tmp` and then renamed with `os.replace`. A crash mid-write can therefore never leave a half-written Parquet file that dbt would later fail to read; the temporary file is removed if the write fails.
+8. **Writing the file:** the output is `{endpoint}_{session}_extracted.parquet` in `/opt/airflow/data/raw` (overridable through the `OPENF1_OUTPUT_PATH` environment variable), compressed with snappy. The name is built by `build_output_path`, a small function the skip check and the writer share, so they can never disagree about where a file lives.
 
 > **Why `/opt/airflow/data/raw`?** Compose mounts `./data` into the container (Chapter 2). Files written there appear on your machine in **airflow/data/raw/**, which is exactly where dbt will read them in Chapter 5.
 
@@ -1100,18 +1280,34 @@ def extract_and_save_endpoint(endpoint: str, target_session="latest", api_params
 
 Replace **airflow/dags/extract_openf1_dag.py** with the DAG below. It adds a **parameter** (`target_session_key`), a metadata task that decides *what* to extract, and mapped extraction tasks.
 
+> **The second edition's DAG is the complete one.** It also contains three **opt-in** tasks that do nothing unless you switch them on in the trigger form: `transcribe_team_radio` (explained in Chapter 6), `upload_raw_to_gcs` (Chapter 10) and `run_dbt_build` (Chapter 8). Read past them for now; every opt-in task is skipped by default, so the DAG behaves exactly like the extraction-only version until you ask for more.
+
 ```python
+from collections.abc import Sequence
+import json
 import logging
+import os
+import shlex
+import subprocess
 from datetime import datetime, timedelta
+
 from airflow import DAG
 from airflow.decorators import task
+from airflow.exceptions import AirflowFailException, AirflowSkipException
 from airflow.models.param import Param
-from airflow.utils.task_group import TaskGroup
 from airflow.operators.empty import EmptyOperator
+from airflow.utils.task_group import TaskGroup
 
-# Import your refactored extractor module and hook
-from modules.universal_extractor import extract_and_save_endpoint
 from hooks.openf1_hook import OpenF1Hook
+from slack_alerts import send_slack_failure_alert
+
+# ==========================================
+# DBT LOCATIONS (inside the Airflow container; see docker-compose.yaml for the mounts)
+# ==========================================
+DBT_PROJECT_DIR = os.environ.get("DBT_PROJECT_DIR", "/opt/airflow/dbt/f1_data_project")
+DBT_PROFILES_DIR = os.environ.get("DBT_PROFILES_DIR", DBT_PROJECT_DIR)
+DBT_TARGET = os.environ.get("DBT_TARGET", "container")
+RAW_DIR = os.environ.get("OPENF1_OUTPUT_PATH", "/opt/airflow/data/raw")
 
 # ==========================================
 # DEFAULT ARGS
@@ -1119,8 +1315,12 @@ from hooks.openf1_hook import OpenF1Hook
 default_args = {
     "owner": "data_engineering",
     "depends_on_past": False,
-    "retries": 1,
+    "retries": 2,
     "retry_delay": timedelta(minutes=3),
+    "retry_exponential_backoff": True,      # 3 min, 6 min, ... so a rate-limited API gets time to recover
+    "max_retry_delay": timedelta(minutes=30),
+    "execution_timeout": timedelta(hours=3),  # a hung HTTP call must not hold a pool slot forever
+    "on_failure_callback": send_slack_failure_alert,    # structured log line + optional webhook (ALERT_WEBHOOK_URL)
 }
 
 # ==========================================
@@ -1134,55 +1334,77 @@ with DAG(
     catchup=False,
     params={
         "target_session_key": Param(
-            default="latest",
-            type="string",
-            description="Enter a session_key integer, 'latest', or 'all'."
-        )
+            default="latest", type="string",
+            description="Enter a session_key, 'latest', or 'all'.",
+        ),
+        "min_session_key": Param(
+            default=0, type="integer",
+            description="Only extract sessions with session_key >= this value (use with 'all' to bound a backfill).",
+        ),
+        "max_sessions": Param(
+            default=150, type="integer",
+            description="Fan-out guard: abort if more sessions than this would be extracted.",
+        ),
+        "allow_large_backfill": Param(
+            default=False, type="boolean",
+            description="Tick to override the max_sessions guard on purpose.",
+        ),
+        "skip_existing": Param(
+            default=False, type="boolean",
+            description="Do not re-download endpoint/session files that already exist (cheap backfills; never use for a live session).",
+        ),
+        "run_dbt_build": Param(
+            default=False, type="boolean",
+            description="Run `dbt build` after extraction (needs dbt + the dbt project mounted in the container).",
+        ),
+        "transcribe_radio": Param(
+            default=False, type="boolean",
+            description="Transcribe team radio audio with faster-whisper (needs the package + outbound HTTPS; slow on CPU).",
+        ),
+        "upload_to_gcs": Param(
+            default=False, type="boolean",
+            description="Upload extracted Parquet to GCS_RAW_BUCKET after extraction.",
+        ),
     },
-    tags=["openf1", "ingestion"]
+    tags=["openf1", "ingestion"],
 ) as dag:
 
     start = EmptyOperator(task_id="start_extraction")
 
     # ==========================================
-    # TASK: FETCH SESSION METADATA
+    # TASK: FETCH SESSION METADATA (+ fan-out guard)
     # ==========================================
     @task
     def fetch_session_metadata(**context):
-        """Fetches raw session metadata from the OpenF1 API using the custom Hook."""
+        """Fetches the raw session metadata from the API using the custom Hook, then applies the backfill guard."""
         hook = OpenF1Hook()
-        target = context["params"]["target_session_key"]
+        p = context["params"]
+        target = p["target_session_key"]
 
         if str(target).lower() == "all":
-            params = {}  # No filter — API returns full history
+            params = {}  # omit session_key entirely: API returns full history + future
         elif str(target).lower() == "latest":
             params = {"session_key": "latest"}
         else:
             params = {"session_key": int(target) if str(target).isdigit() else target}
 
-        logging.info(
-            f"Fetching session metadata for: "
-            f"{params if params else 'ALL historical sessions'}"
-        )
-
-        sessions = hook.get_endpoint("/sessions", params=params)
+        logging.info(f"Fetching session metadata for: {params if params else 'ALL historical sessions'}")
+        sessions = hook.get_endpoint('/sessions', params=params)
 
         if not sessions:
             logging.warning("No sessions found for the given parameter.")
             return []
 
-        # ==========================================
-        # FAN-OUT GUARD: Protect worker from massive 'all' payload
-        # ==========================================
-        if str(target).lower() == "all":
-            # OpenF1 session keys are sequential integers; 9000+ corresponds to ~2023 onward
-            filtered_sessions = [s for s in sessions if s.get("session_key", 0) >= 9000]
-            logging.warning(
-                f"Historical load requested. Capping {len(sessions)} total sessions "
-                f"to {len(filtered_sessions)} (ID >= 9000) to prevent worker OOM and API limits."
-            )
-            return filtered_sessions
+        min_key = int(p["min_session_key"])
+        if min_key:
+            sessions = [s for s in sessions if int(s["session_key"]) >= min_key]
 
+        if len(sessions) > int(p["max_sessions"]) and not p["allow_large_backfill"]:
+            raise AirflowFailException(
+                f"{len(sessions)} sessions would be extracted (guard max_sessions={p['max_sessions']}). "
+                "Narrow the range with min_session_key, or tick allow_large_backfill to proceed deliberately."
+            )
+        logging.info(f"{len(sessions)} session(s) selected for extraction.")
         return sessions
 
     # ==========================================
@@ -1190,49 +1412,39 @@ with DAG(
     # ==========================================
     @task
     def get_all_keys(sessions):
-        """Returns session_key for every session."""
-        return [s["session_key"] for s in sessions]
+        return [s['session_key'] for s in sessions]
 
     @task
     def get_race_keys(sessions):
-        """Returns session_key for Race sessions only."""
-        return [s["session_key"] for s in sessions if s.get("session_type") == "Race"]
+        return [s['session_key'] for s in sessions if s.get('session_type') == 'Race']
 
     @task
     def get_quali_and_race_keys(sessions):
-        """Returns session_key for Race, Qualifying, Sprint, and Sprint Qualifying sessions."""
-        valid_types = {"Race", "Qualifying", "Sprint", "Sprint Qualifying"}
-        return [
-            s["session_key"] for s in sessions
-            if s.get("session_type") in valid_types
-        ]
+        valid_types = {'Race', 'Qualifying', 'Sprint', 'Sprint Qualifying'}
+        return [s['session_key'] for s in sessions if s.get('session_type') in valid_types]
 
     # ==========================================
-    # TASK: EXTRACTION WRAPPER (Dynamically Mapped)
+    # TASK: EXTRACTION WRAPPER (Mapped)
     # ==========================================
-    @task(pool="openf1_api_pool")
-    def extract_mapped_data(endpoint: str, target_session: str, is_global: bool = False):
-        """Universal extraction task — mapped over session keys per endpoint."""
+    @task(pool='openf1_api_pool')
+    def extract_mapped_data(endpoint: str, target_session: str, is_global: bool = False, **context):
+        from modules.universal_extractor import extract_and_save_endpoint
         return extract_and_save_endpoint(
             endpoint=endpoint,
             target_session=target_session,
-            is_global=is_global
+            is_global=is_global,
+            skip_existing=bool(context["params"]["skip_existing"]),
+            run_id=context["run_id"],
         )
 
     # ==========================================
-    # WORKFLOW: RESOLVE SESSIONS
+    # WORKFLOW DEFINITION
     # ==========================================
-
-    # Call resolve tasks EXACTLY ONCE each — XComArgs are reused across groups
-    raw_sessions      = fetch_session_metadata()
-    all_sessions      = get_all_keys(raw_sessions)
-    race_sessions     = get_race_keys(raw_sessions)
+    raw_sessions = fetch_session_metadata()
+    all_sessions = get_all_keys(raw_sessions)
+    race_sessions = get_race_keys(raw_sessions)
     quali_race_sessions = get_quali_and_race_keys(raw_sessions)
 
-    # ==========================================
-    # TASK GROUP 1: GLOBAL / REFERENCE DATA
-    # Endpoints that don't vary by session — extracted once.
-    # ==========================================
     with TaskGroup("global_and_reference") as event_group:
         global_endpoints = ["meetings", "drivers", "sessions"]
         event_results = []
@@ -1242,10 +1454,6 @@ with DAG(
             ).expand(target_session=["global"])
             event_results.append(res)
 
-    # ==========================================
-    # TASK GROUP 2: HEAVY TELEMETRY
-    # Mapped to ALL sessions — highest fan-out, pool-throttled.
-    # ==========================================
     with TaskGroup("telemetry_and_performance") as telemetry_group:
         telemetry_endpoints = ["car_data", "location"]
         telemetry_results = []
@@ -1255,51 +1463,36 @@ with DAG(
             ).expand(target_session=all_sessions)
             telemetry_results.append(res)
 
-    # ==========================================
-    # TASK GROUP 3: RACE RESULTS & EVENTS
-    # Each endpoint mapped only to the sessions where its data exists.
-    # ==========================================
     with TaskGroup("race_results_and_events") as results_group:
         results_out = []
 
-        # All sessions
         all_session_endpoints = [
             "weather", "team_radio", "race_control", "pit",
             "laps", "stints", "position", "session_result"
         ]
         for ep in all_session_endpoints:
-            res = extract_mapped_data.override(task_id=f"extract_{ep}_all").partial(
-                endpoint=ep
-            ).expand(target_session=all_sessions)
+            res = extract_mapped_data.override(task_id=f"extract_{ep}_all").partial(endpoint=ep).expand(target_session=all_sessions)
             results_out.append(res)
 
-        # Race sessions only
-        race_endpoints = [
-            "intervals", "overtakes", "championship_drivers", "championship_teams"
-        ]
+        race_endpoints = ["intervals", "overtakes", "championship_drivers", "championship_teams"]
         for ep in race_endpoints:
-            res = extract_mapped_data.override(task_id=f"extract_{ep}_race").partial(
-                endpoint=ep
-            ).expand(target_session=race_sessions)
+            res = extract_mapped_data.override(task_id=f"extract_{ep}_race").partial(endpoint=ep).expand(target_session=race_sessions)
             results_out.append(res)
 
-        # Qualifying + Race + Sprint sessions only
-        res_grid = extract_mapped_data.override(task_id="extract_starting_grid").partial(
-            endpoint="starting_grid"
-        ).expand(target_session=quali_race_sessions)
+        res_grid = extract_mapped_data.override(task_id="extract_starting_grid").partial(endpoint="starting_grid").expand(target_session=quali_race_sessions)
         results_out.append(res_grid)
 
     # ==========================================
-    # TASK: VERIFY AND LOAD
-    # Aggregates results from all groups.
+    # TASK: VERIFY, RECONCILE AND WRITE A MANIFEST
     # ==========================================
     @task
-    def verify_and_load(event_results_in, telemetry_results_in, results_out_in):
-        """Flattens and counts successfully extracted files across all task groups."""
+    def verify_and_load(event_results, telemetry_results, results_out, **context):
+        from modules.pipeline_utils import build_manifest
+
         flat_results = []
-        for group in [event_results_in, telemetry_results_in, results_out_in]:
-            for item in group:
-                if isinstance(item, list):
+        for task_group_results in [event_results, telemetry_results, results_out]:
+            for item in task_group_results:
+                if isinstance(item, Sequence) and not isinstance(item, (str, bytes)):
                     flat_results.extend(item)
                 else:
                     flat_results.append(item)
@@ -1307,33 +1500,72 @@ with DAG(
         saved_files = [r for r in flat_results if r is not None]
 
         if not saved_files:
-            logging.warning(
-                "Pipeline completed, but NO files were successfully extracted or saved."
-            )
-        else:
-            logging.info(
-                f"✅ Success! {len(saved_files)} Parquet files extracted and saved. "
-                f"Ready for dbt."
-            )
+            logging.warning("Pipeline completed, but NO files were successfully extracted or saved.")
+            return {"files": [], "manifest_path": None}
+
+        manifest_path = build_manifest(saved_files, RAW_DIR, context["run_id"])
+        logging.info(f"{len(saved_files)} Parquet files extracted. Manifest written to {manifest_path}. Ready for dbt!")
+        return {"files": saved_files, "manifest_path": manifest_path}
 
     load_task = verify_and_load(event_results, telemetry_results, results_out)
 
     # ==========================================
+    # OPTIONAL: UPLOAD RAW FILES TO GCS
+    # ==========================================
+    @task
+    def upload_raw_to_gcs(load_result, **context):
+        if not context["params"]["upload_to_gcs"]:
+            raise AirflowSkipException("upload_to_gcs is off for this run.")
+        bucket = os.environ.get("GCS_RAW_BUCKET")
+        if not bucket:
+            raise AirflowFailException("upload_to_gcs=True but env var GCS_RAW_BUCKET is not set.")
+        from modules.gcs_loader import upload_raw_files
+        return upload_raw_files(load_result["files"], bucket=bucket)
+
+    # ==========================================
+    # OPTIONAL: RUN DBT AFTER EXTRACTION
+    # ==========================================
+    @task
+    def run_dbt_build(load_result, **context):
+        if not context["params"]["run_dbt_build"]:
+            raise AirflowSkipException("run_dbt_build is off for this run.")
+        if not load_result["files"]:
+            raise AirflowSkipException("Nothing was extracted, so there is nothing to transform.")
+
+        env = {**os.environ, "DBT_PROFILES_DIR": DBT_PROFILES_DIR}
+        cmd = f"dbt build --target {shlex.quote(DBT_TARGET)} --profiles-dir {shlex.quote(DBT_PROFILES_DIR)}"
+        logging.info(f"Running: {cmd} (cwd={DBT_PROJECT_DIR})")
+        result = subprocess.run(cmd, shell=True, capture_output=True, text=True, cwd=DBT_PROJECT_DIR, env=env)
+        logging.info(result.stdout[-6000:])
+        if result.returncode != 0:
+            logging.error(result.stderr[-3000:])
+            raise AirflowFailException(f"dbt build failed with exit code {result.returncode}. See the task log above.")
+        return "dbt build succeeded"
+
+    # ==========================================
+    # OPTIONAL: TRANSCRIBE TEAM RADIO (one session at a time: CPU heavy)
+    # ==========================================
+    @task(max_active_tis_per_dag=1)
+    def transcribe_team_radio(target_session, **context):
+        if not context["params"]["transcribe_radio"]:
+            raise AirflowSkipException("transcribe_radio is off for this run.")
+        from modules.radio_transcriber import transcribe_session
+        return transcribe_session(target_session, RAW_DIR, model_name=os.environ.get("RADIO_WHISPER_MODEL", "small.en"))
+
+    radio_task = transcribe_team_radio.expand(target_session=all_sessions)
+
+    upload_task = upload_raw_to_gcs(load_task)
+    dbt_task = run_dbt_build(load_task)
+
+    # ==========================================
     # EXPLICIT DEPENDENCY GRAPH
     # ==========================================
-
-    # Start -> fetch metadata -> derive filter lists
     start >> raw_sessions >> [all_sessions, race_sessions, quali_race_sessions]
-
-    # Global extractions have no session dependency — run immediately after start
     start >> event_group
-
-    # Each group waits only on the filter(s) it actually uses
     all_sessions >> telemetry_group
     [all_sessions, race_sessions, quali_race_sessions] >> results_group
-
-    # All groups must complete before load aggregation
     [event_group, telemetry_group, results_group] >> load_task
+    results_group >> radio_task
 ```
 
 **What changed and why**
@@ -1371,6 +1603,203 @@ PY
 
 For a full backfill, trigger with `all`. Expect it to take a long time, because pacing and backoff are deliberate (the long export times in Chapter 7 belong to the *export* step, not to extraction).
 
+#### **Task 4: Know What a Run Produced (Manifest and Failure Alerts)**
+
+New in the second edition. Two small helpers live in **airflow/dags/modules/pipeline_utils.py** (the manifest builder and a generic `notify_failure` callback). They deliberately import nothing from Airflow, so they can be unit tested without it.
+
+```python
+"""Small, Airflow-free helpers so they can be unit tested: run manifest + failure notification."""
+import json
+import logging
+import os
+import urllib.request
+from datetime import datetime, timezone
+
+import pyarrow.parquet as pq
+
+
+def build_manifest(files, raw_dir: str, run_id: str) -> str:
+    """Write raw_dir/_manifests/<run_id>.json listing every file with its row count and size.
+    dbt tests / reviewers can reconcile what was extracted in a run against what reached the warehouse."""
+    entries = []
+    for f in files:
+        try:
+            rows = pq.ParquetFile(f).metadata.num_rows
+        except Exception as exc:  # a corrupt file must be visible in the manifest, not crash the run
+            logging.error(f"Could not read Parquet metadata for {f}: {exc}")
+            rows = None
+        entries.append({"file": os.path.basename(f), "rows": rows, "bytes": os.path.getsize(f) if os.path.exists(f) else None})
+    manifest = {
+        "run_id": run_id,
+        "generated_at_utc": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+        "file_count": len(entries),
+        "total_rows": sum(e["rows"] or 0 for e in entries),
+        "files": sorted(entries, key=lambda e: e["file"]),
+    }
+    out_dir = os.path.join(raw_dir, "_manifests")
+    os.makedirs(out_dir, exist_ok=True)
+    safe = "".join(c if c.isalnum() or c in "-_." else "_" for c in str(run_id))
+    path = os.path.join(out_dir, f"{safe}.json")
+    with open(path, "w") as fh:
+        json.dump(manifest, fh, indent=2)
+    return path
+
+
+def notify_failure(context):
+    """on_failure_callback: always logs one structured line; also POSTs to ALERT_WEBHOOK_URL if configured
+    (Slack-compatible {'text': ...} payload). Never raises: alerting must not mask the original failure."""
+    try:
+        ti = context.get("task_instance")
+        info = {
+            "dag_id": getattr(ti, "dag_id", None), "task_id": getattr(ti, "task_id", None),
+            "run_id": context.get("run_id"), "try_number": getattr(ti, "try_number", None),
+            "exception": str(context.get("exception"))[:500],
+        }
+        logging.error("PIPELINE_FAILURE " + json.dumps(info))
+        url = os.environ.get("ALERT_WEBHOOK_URL")
+        if url:
+            body = json.dumps({"text": f"OpenF1 pipeline failure: {info['dag_id']}.{info['task_id']} ({info['run_id']}): {info['exception']}"}).encode()
+            req = urllib.request.Request(url, data=body, headers={"Content-Type": "application/json"})
+            urllib.request.urlopen(req, timeout=10)
+    except Exception as exc:
+        logging.error(f"notify_failure itself failed: {exc}")
+```
+
+**Why it is written this way**
+
+* **The manifest** (`airflow/data/raw/_manifests/<run_id>.json`) lists every file the run saved with its **row count and size**. A later reviewer, or a dbt test, can reconcile "what was extracted" against "what reached the warehouse".
+* **The run id is sanitised** before it becomes a file name. Airflow run ids contain `:` (for example `manual__2026-01-01T00:00:00+00:00`), which Windows refuses in file names, so the helper replaces any other character first. A unit test pins that behaviour; it was written as a precaution, not in response to a failure.
+* **A corrupt file is recorded, not fatal:** if a Parquet file cannot be read, its entry gets `rows: null` and the manifest is still written. An audit log that crashes on the thing it is auditing is useless.
+* **`notify_failure` never raises.** Alerting runs *while something is already failing*; if the webhook is down, the original error must stay visible, not be replaced by a second one. Any Slack-compatible webhook works because the payload is just `{"text": "..."}`. The DAG itself uses the richer Slack callback described next; `notify_failure` stays in `pipeline_utils.py` as the dependency-free alternative and is covered by a unit test.
+
+**The Slack failure alert.** The DAG's failure callback is **airflow/plugins/slack_alerts.py**. It stays silent while retries remain, does nothing (but logs a warning) when `ALERT_WEBHOOK_URL` is empty, and otherwise posts a Slack message built from Block Kit blocks: the DAG, task (with its map index), run id and attempt, the exception text (cut to 500 characters), the tail of the task's log file (cut to 2,400 characters to stay under Slack's section limit) and a link to the task log in the Airflow UI. Like `notify_failure`, it never raises: if the post fails it only logs an error.
+
+```python
+import logging
+import os
+from pathlib import Path
+import requests
+from airflow.configuration import conf
+
+log = logging.getLogger(__name__)
+
+MAX_LOG_CHARS = 2400  # Keeps Slack section blocks safely under Slack's 3,000-char limit
+
+
+def _read_task_log_tail(ti) -> str:
+    base_log_folder = conf.get("logging", "base_log_folder", fallback="/opt/airflow/logs")
+    parts = [
+        base_log_folder,
+        f"dag_id={ti.dag_id}",
+        f"run_id={ti.run_id}",
+        f"task_id={ti.task_id}",
+    ]
+    map_index = getattr(ti, "map_index", -1)
+    if map_index is not None and map_index >= 0:
+        parts.append(f"map_index={map_index}")
+
+    log_dir = Path(*parts)
+    candidate = log_dir / f"attempt={ti.try_number}.log"
+
+    if not candidate.exists() and log_dir.exists():
+        attempts = sorted(log_dir.glob("attempt=*.log"))
+        if attempts:
+            candidate = attempts[-1]
+
+    if not candidate.exists():
+        return f"Log file not found at {candidate} (task may have been killed before writing logs)."
+
+    text = candidate.read_text(encoding="utf-8", errors="replace")
+    if len(text) > MAX_LOG_CHARS:
+        return "... [truncated] ...\n" + text[-MAX_LOG_CHARS:]
+    return text or "(empty log file)"
+
+
+def send_slack_failure_alert(context: dict) -> None:
+    ti = context["task_instance"]
+    if ti.try_number <= ti.max_tries:
+        return
+
+    webhook_url = os.getenv("ALERT_WEBHOOK_URL", "").strip()
+    if not webhook_url:
+        log.warning("ALERT_WEBHOOK_URL is not set; skipping Slack failure alert.")
+        return
+
+    exception = context.get("exception")
+    map_index = getattr(ti, "map_index", -1)
+    task_label = f"{ti.task_id}[{map_index}]" if map_index is not None and map_index >= 0 else ti.task_id
+    log_tail = _read_task_log_tail(ti)
+
+    blocks = [
+        {
+            "type": "header",
+            "text": {
+                "type": "plain_text",
+                "text": f":x: Airflow Task Failed: {ti.dag_id}.{task_label}",
+            },
+        },
+        {
+            "type": "section",
+            "fields": [
+                {"type": "mrkdwn", "text": f"*DAG:*\n`{ti.dag_id}`"},
+                {"type": "mrkdwn", "text": f"*Task:*\n`{task_label}`"},
+                {"type": "mrkdwn", "text": f"*Run ID:*\n`{ti.run_id}`"},
+                {"type": "mrkdwn", "text": f"*Attempt:*\n`{ti.try_number}`"},
+            ],
+        },
+    ]
+
+    if exception:
+        exc_text = str(exception)
+        if len(exc_text) > 500:
+            exc_text = exc_text[:500] + "..."
+        blocks.append(
+            {
+                "type": "section",
+                "text": {"type": "mrkdwn", "text": f"*Exception:*\n`{exc_text}`"},
+            }
+        )
+
+    blocks.extend(
+        [
+            {
+                "type": "section",
+                "text": {"type": "mrkdwn", "text": f"*Log Tail:*\n```{log_tail}```"},
+            },
+            {
+                "type": "context",
+                "elements": [
+                    {"type": "mrkdwn", "text": f"<{ti.log_url}|Open Task Log in Airflow UI>"},
+                ],
+            },
+        ]
+    )
+
+    try:
+        resp = requests.post(webhook_url, json={"blocks": blocks}, timeout=10)
+        resp.raise_for_status()
+    except Exception as err:
+        log.error("Failed to send Slack alert: %s", err)
+```
+
+The payload is Slack Block Kit, so it needs a **Slack** webhook; `notify_failure`'s plain `{"text": ...}` payload works with any Slack-compatible endpoint.
+
+#### **Task 5: Run the Python Tests**
+
+New in the second edition. The extractor is the part of the project that talks to a flaky external API, which makes it the part most worth testing, and it can be tested **without the API**. **airflow/tests/conftest.py** replaces the real hook with a scripted `FakeHook`; each test then decides what the "API" answers:
+
+```python
+fake_hook.script["/car_data"] = car      # a function that raises "422" unless a time window is requested
+path = ue.extract_and_save_endpoint("car_data", target_session=7)
+assert pq.read_table(path).num_rows == 3   # the extractor fell back to three 15-minute windows
+```
+
+```bash
+python -m pytest -q airflow/tests
+```
+
+The tests cover the sanitiser, 404 skipping, 422 time-window chunking, 429 backoff, idempotent file names, `skip_existing`, atomic writes, the manifest, the generic failure callback, the GCS loader (Chapter 10), the radio transcriber (Chapter 6) and the BigQuery loader (Chapter 10). The 422 and 429 paths existed in the first edition but had never been tested; writing the tests did not find a bug there, which is itself useful information.
+
 ### **Learner Pitfalls & Troubleshooting**
 
 * **The Problem:** `ArrowInvalid` / "could not convert" when writing Parquet.
@@ -1392,6 +1821,14 @@ For a full backfill, trigger with `all`. Expect it to take a long time, because 
 * **The Problem (confirmed in the final log of the build):** a run fails with `404` on `/drivers?year=2023` while you believe you are running the new DAG.
 * **Why it Happens (inference):** the log line `universal_extractor.py:15 ... params {'year': 2023}` comes from the **old** Chapter 2 extractor, whose default was `{"year": 2023}`. The new DAG was running against a stale module file. The DAG and the module it imports must be updated **together**.
 * **The Solution:** replace `universal_extractor.py` with the Task 1 version, save, wait for the scheduler to re-parse, and confirm the first log line of a task reads `Extracting data from /... (Attempt 1/3)...`.
+
+* **The Problem (second edition):** a run fails at `fetch_session_metadata` with `... sessions would be extracted (guard max_sessions=150). Narrow the range with min_session_key, or tick allow_large_backfill`.
+* **Why it Happens:** that is the fan-out guard doing its job: `all` matched more sessions than `max_sessions`.
+* **The Solution:** pass `min_session_key` to bound the backfill (for example the first session key of the season you want), or tick `allow_large_backfill` if the size is intentional.
+
+* **The Problem (second edition):** with `skip_existing` on, a session's data looks **stale** or incomplete.
+* **Why it Happens:** an earlier run extracted that session while it was still live, and the file is now being skipped because it exists.
+* **The Solution:** delete that session's files (or run once with `skip_existing` off) after the session has finished. Never use `skip_existing` for `latest`.
 
 ---
 
@@ -1481,29 +1918,60 @@ pip install dbt-duckdb
 dbt --version
 ```
 
-**Step 2: Create `profiles.yml`.** dbt looks for it in your user folder by default (`~/.dbt/profiles.yml`; on Windows `C:\Users\<you>\.dbt\profiles.yml`).
+**Step 2: Create `profiles.yml`.** In the first edition this file lived in your user folder (`~/.dbt/`). In the second edition it lives **inside the dbt project**, so your laptop, Airflow and CI all use the same file. dbt looks in the folder you run it from **before** it looks in `~/.dbt/`, so running `dbt` from `dbt_f1_transformations/` just works; the `--target` flag picks which block below is used (the default is `dev`).
 
 ```yaml
+# Profiles live in the project so Airflow, CI and your laptop all use the same file:
+#   dbt build --profiles-dir . --target dev        (host)
+#   dbt build --profiles-dir . --target container  (inside the Airflow container)
+#   dbt build --profiles-dir . --target ci         (GitHub Actions, synthetic fixtures)
+#   dbt build --profiles-dir . --target bigquery   (cloud warehouse; needs `gcloud auth application-default login`)
+#   dbt build --profiles-dir . --target bigquery_emulator   (local BigQuery emulator; see ci/bq_emulator_runner.py)
 dbt_f1_transformations:
   target: dev
   outputs:
     dev:
       type: duckdb
-      # A local DuckDB file; replace with the absolute path to your project root
-      path: "F:/DaTech/Production/f1_data_project/f1_local_warehouse.duckdb"
+      path: "{{ env_var('F1_DUCKDB_PATH', 'F:/DaTech/f1_data_project/f1_local_warehouse.duckdb') }}"
       threads: 1
-      # Redirect spill-to-disk files (see Chapter 7)
-      settings:
-        temp_directory: "F:/DaTech/Production/f1_data_project/.duckdb_tmp"
+    container:
+      type: duckdb
+      path: "{{ env_var('F1_DUCKDB_PATH', '/opt/airflow/data/warehouse/f1_local_warehouse.duckdb') }}"
+      threads: 1
+    ci:
+      type: duckdb
+      path: "{{ env_var('F1_DUCKDB_PATH', '/tmp/f1_ci.duckdb') }}"
+      threads: 1
+    bigquery:
+      type: bigquery
+      method: oauth                       # application-default credentials (gcloud auth application-default login)
+      project: "{{ env_var('F1_BQ_PROJECT') }}"
+      dataset: "{{ env_var('F1_BQ_DATASET', 'f1_analytics') }}"   # where dbt builds staging, intermediate and marts
+      location: "{{ env_var('F1_BQ_LOCATION', 'US') }}"
+      threads: 4
+    bigquery_emulator:
+      type: bigquery
+      method: oauth
+      project: "{{ env_var('F1_BQ_PROJECT', 'f1test') }}"
+      dataset: "{{ env_var('F1_BQ_DATASET', 'f1_analytics') }}"
+      location: US
+      api_endpoint: "{{ env_var('F1_BQ_API_ENDPOINT', 'http://localhost:9050') }}"
+      threads: 1
 ```
 
 > **The first word must match.** `dbt_f1_transformations` here must be identical to the `profile:` line in `dbt_project.yml`. A mismatch gives "Could not find profile named ...".
+
+**Read the profile like an engineer**
+
+* **Several kinds of target.** `dev` is your laptop. `container` is the same project run *inside* the Airflow container (Chapter 8). `ci` is the synthetic dataset used by the automated tests (Chapter 11). `bigquery` and `bigquery_emulator` are the cloud warehouse and its local test double (Chapter 10). You only need `dev` today.
+* **`{{ env_var('NAME', 'default') }}`:** the value comes from an environment variable when it is set and falls back to the default (your `F:/` paths) when it is not. That is how one file serves a laptop, a container and CI without edits.
+* **`config_options` versus `settings`:** the shipped profile sets no `temp_directory`, so DuckDB uses its default spill location. If you add one, put it under `config_options`, which DuckDB applies **once, when the connection opens**. Under `settings` it looks equivalent and is not; see the pitfall at the end of this chapter.
 
 **Step 3: Create `dbt_project.yml`** inside **dbt_f1_transformations/**:
 
 ```yaml
 name: 'dbt_f1_transformations'
-version: '1.0.0'
+version: '1.1.0'
 profile: 'dbt_f1_transformations'
 
 model-paths: ["models"]
@@ -1517,15 +1985,66 @@ clean-targets:
   - "target"
   - "dbt_packages"
 
+# ---------------------------------------------------------------------------
+# Tunable analytics assumptions. Change them here, not inside the SQL.
+# ---------------------------------------------------------------------------
+vars:
+  # Fuel burn lap-time effect (s per lap of fuel burned). ASSUMPTION: ~0.03-0.04 s/lap is a commonly
+  # quoted figure; real values vary by circuit/era. Used only for fuel_corrected_lap_time_seconds.
+  fuel_effect_seconds_per_lap: 0.035
+  # A lap is "representative" if within this multiple of the driver's median clean-lap time.
+  representative_lap_threshold: 1.07
+  drs_range_seconds: 1.0            # within this gap to the car ahead => "in DRS range"
+  dirty_air_seconds: 2.0            # within this gap => aerodynamic wake effects likely
+  slow_stop_margin_seconds: 3.0     # pit lane time above session median + margin => slow stop
+  min_stint_laps_for_degradation: 5 # regression needs at least this many representative laps
+  distance_bin_metres: 10           # resolution of the distance-domain telemetry trace
+  telemetry_max_unknown_lap_seconds: 200   # telemetry window for a lap whose duration OpenF1 omits
+  telemetry_lap_tolerance_seconds: 2       # grace after lap_start + lap_duration before a sample stops belonging to the lap
+  min_plausible_lap_seconds: 30            # sanity floor used by tests (no F1 lap is shorter)
+  max_unclosed_vsc_seconds: 600            # an SC/VSC with no closing race-control message is capped (VSC 10 min, SC 20 min)
+  max_unclosed_sc_seconds: 1200
+  fastest_lap_bonus_last_year: 2024 # the bonus point was removed from the 2025 season
+  # --- derived corner detection (no official corner data exists in OpenF1) ---
+  corner_smooth_bins: 2              # speed smoothing half-window (bins)
+  corner_min_separation_bins: 15     # two apexes closer than this many bins collapse to the lowest one
+  corner_prominence_window_bins: 50  # window used to measure how far speed drops into a corner
+  corner_min_speed_drop_kph: 25      # a corner = speed minimum at least this far below the surrounding peak
+  corner_entry_distance_m: 150
+  corner_exit_distance_m: 100
+  corner_brake_lookback_m: 100       # how far before entry a brake application still belongs to this corner
+  corner_slow_kph: 120               # apex speed classes
+  corner_fast_kph: 220
+  # --- undercut / overcut ---
+  undercut_window_laps: 8            # two stops within this many laps are considered related
+  undercut_max_gap_seconds: 8.0      # attacker must be within this gap of the defender before the first stop
+  # --- safety car model ---
+  sc_prior_laps: 300                 # strength of the pull toward the all-circuit rate (empirical Bayes)
+  # Where the telemetry export writes partitioned Parquet (relative to the dbt process, or absolute)
+  telemetry_export_path: "{{ env_var('F1_EXPORT_PATH', 'output/telemetry_data') }}"
+  # BigQuery only: telemetry tables are partitioned with EXACTLY ONE session per partition so insert_overwrite can only
+  # ever replace the session being loaded. Sessions outside [start, end) land in a catch-all partition: widen the range
+  # (max 4000 partitions) before the season counter outgrows it.
+  bq_session_key_start: 9000
+  bq_session_key_end: 13000
+  bq_incremental_strategy: insert_overwrite   # use 'merge' where scripting (insert_overwrite) is unavailable
+  export_data: false
+  # Build the radio transcript models. Leave false until radio_transcripts_*_extracted.parquet files exist.
+  enable_radio_transcripts: false
+
 models:
   dbt_f1_transformations:
     staging:
       +materialized: view
+    intermediate:
+      +materialized: table
     marts:
       +materialized: table
 ```
 
-This sets the rule from Chapter 4: everything in `staging/` is a **view**, everything in `marts/` is a **table**.
+This sets the rule from Chapter 4: everything in `staging/` is a **view**, everything in `intermediate/` and `marts/` is a **table**.
+
+The long `vars:` block is new in the second edition. It holds every **tunable assumption** in one place (the fuel-burn effect, the DRS-range threshold, the corner-detection thresholds and so on), so that changing an assumption never means editing SQL. Each variable is explained in the chapter that uses it, with the reason for its default.
 
 **Step 4: Test the connection**
 
@@ -1545,85 +2064,139 @@ version: 2
 
 sources:
   - name: openf1_raw
+    schema: "{{ env_var('F1_RAW_SCHEMA', 'f1_raw') }}"   # BigQuery dataset loaded by scripts/load_raw_to_bigquery.py (DuckDB ignores it)
     description: "Raw Parquet files extracted locally from the OpenF1 API via Airflow"
     tables:
+      # 1. Drivers & Teams
       - name: drivers
         description: "Raw driver information and details"
         config:
-          external_location: "F:/DaTech/Production/f1_data_project/airflow/data/raw/drivers_*_extracted.parquet"
+          meta:
+            external_location: "read_parquet('{{ env_var('F1_RAW_DATA_PATH', 'F:/DaTech/f1_data_project/airflow/data/raw') }}/drivers_*_extracted.parquet', union_by_name=true)"
+          
       - name: championship_drivers
         description: "Driver championship standings and points"
         config:
-          external_location: "F:/DaTech/Production/f1_data_project/airflow/data/raw/championship_drivers_*_extracted.parquet"
+          meta:
+            external_location: "read_parquet('{{ env_var('F1_RAW_DATA_PATH', 'F:/DaTech/f1_data_project/airflow/data/raw') }}/championship_drivers_*_extracted.parquet', union_by_name=true)"
+          
       - name: championship_teams
         description: "Constructor championship standings and points"
         config:
-          external_location: "F:/DaTech/Production/f1_data_project/airflow/data/raw/championship_teams_*_extracted.parquet"
+          meta:
+            external_location: "read_parquet('{{ env_var('F1_RAW_DATA_PATH', 'F:/DaTech/f1_data_project/airflow/data/raw') }}/championship_teams_*_extracted.parquet', union_by_name=true)"
+
+      # 2. Race Weekend Structure
       - name: meetings
         description: "Grand Prix weekend metadata (locations, dates)"
         config:
-          external_location: "F:/DaTech/Production/f1_data_project/airflow/data/raw/meetings_*_extracted.parquet"
+          meta:
+            external_location: "read_parquet('{{ env_var('F1_RAW_DATA_PATH', 'F:/DaTech/f1_data_project/airflow/data/raw') }}/meetings_*_extracted.parquet', union_by_name=true)"
+          
       - name: sessions
-        description: "Session metadata (practice, qualifying, race)"
+        description: "Specific session metadata (FP1, Quali, Race)"
         config:
-          external_location: "F:/DaTech/Production/f1_data_project/airflow/data/raw/sessions_*_extracted.parquet"
+          meta:
+            external_location: "read_parquet('{{ env_var('F1_RAW_DATA_PATH', 'F:/DaTech/f1_data_project/airflow/data/raw') }}/sessions_*_extracted.parquet', union_by_name=true)"
+          
       - name: session_result
-        description: "Final classification and results per session"
+        description: "Final classification and results of a session"
         config:
-          external_location: "read_parquet('F:/DaTech/Production/f1_data_project/airflow/data/raw/session_result_*_extracted.parquet', union_by_name=true)"
+          meta:
+            external_location: "read_parquet('{{ env_var('F1_RAW_DATA_PATH', 'F:/DaTech/f1_data_project/airflow/data/raw') }}/session_result_*_extracted.parquet', union_by_name=true)"
+          
       - name: starting_grid
-        description: "Starting grid positions per session"
+        description: "Starting grid positions for the race or sprint"
         config:
-          external_location: "F:/DaTech/Production/f1_data_project/airflow/data/raw/starting_grid_*_extracted.parquet"
+          meta:
+            external_location: "read_parquet('{{ env_var('F1_RAW_DATA_PATH', 'F:/DaTech/f1_data_project/airflow/data/raw') }}/starting_grid_*_extracted.parquet', union_by_name=true)"
+
+      # 3. Track Action & Timing
       - name: laps
-        description: "Lap-by-lap timing, sectors and speeds"
+        description: "Detailed lap times, sectors, and speed traps"
         config:
-          external_location: "F:/DaTech/Production/f1_data_project/airflow/data/raw/laps_*_extracted.parquet"
-      - name: stints
-        description: "Tyre stints per driver"
-        config:
-          external_location: "F:/DaTech/Production/f1_data_project/airflow/data/raw/stints_*_extracted.parquet"
-      - name: pit
-        description: "Pit stop events and durations"
-        config:
-          external_location: "F:/DaTech/Production/f1_data_project/airflow/data/raw/pit_*_extracted.parquet"
-      - name: position
-        description: "Track position changes over time"
-        config:
-          external_location: "F:/DaTech/Production/f1_data_project/airflow/data/raw/position_*_extracted.parquet"
+          meta:
+            external_location: "read_parquet('{{ env_var('F1_RAW_DATA_PATH', 'F:/DaTech/f1_data_project/airflow/data/raw') }}/laps_*_extracted.parquet', union_by_name=true)"
+          
       - name: intervals
-        description: "Gaps to the leader and the car ahead"
+        description: "Time gaps between cars"
         config:
-          external_location: "read_parquet('F:/DaTech/Production/f1_data_project/airflow/data/raw/intervals_*_extracted.parquet', union_by_name=true)"
+          meta:
+            external_location: "read_parquet('{{ env_var('F1_RAW_DATA_PATH', 'F:/DaTech/f1_data_project/airflow/data/raw') }}/intervals_*_extracted.parquet', union_by_name=true)"
+          
+      - name: position
+        description: "Track position updates and leaderboard changes"
+        config:
+          meta:
+            external_location: "read_parquet('{{ env_var('F1_RAW_DATA_PATH', 'F:/DaTech/f1_data_project/airflow/data/raw') }}/position_*_extracted.parquet', union_by_name=true)"
+          
       - name: overtakes
-        description: "Overtake events"
+        description: "Logged overtakes during a session"
         config:
-          external_location: "F:/DaTech/Production/f1_data_project/airflow/data/raw/overtakes_*_extracted.parquet"
-      - name: race_control
-        description: "Flags, safety cars and incident messages"
-        config:
-          external_location: "read_parquet('F:/DaTech/Production/f1_data_project/airflow/data/raw/race_control_*_extracted.parquet', union_by_name=true)"
-      - name: team_radio
-        description: "Team radio recording metadata"
-        config:
-          external_location: "F:/DaTech/Production/f1_data_project/airflow/data/raw/team_radio_*_extracted.parquet"
-      - name: weather
-        description: "Track and air conditions over time"
-        config:
-          external_location: "F:/DaTech/Production/f1_data_project/airflow/data/raw/weather_*_extracted.parquet"
+          meta:
+            external_location: "read_parquet('{{ env_var('F1_RAW_DATA_PATH', 'F:/DaTech/f1_data_project/airflow/data/raw') }}/overtakes_*_extracted.parquet', union_by_name=true)"
+
+      # 4. Telemetry & Environment
       - name: car_data
-        description: "High-frequency telemetry: speed, rpm, gear, throttle, brake, DRS"
+        description: "High-frequency telemetry (speed, throttle, brake, RPM, gear)"
         config:
-          external_location: "F:/DaTech/Production/f1_data_project/airflow/data/raw/car_data_*_extracted.parquet"
+          meta:
+            external_location: "read_parquet('{{ env_var('F1_RAW_DATA_PATH', 'F:/DaTech/f1_data_project/airflow/data/raw') }}/car_data_*_extracted.parquet', union_by_name=true)"
+          
       - name: location
-        description: "High-frequency x/y/z car positions"
+        description: "GPS coordinate track locations for each car"
         config:
-          external_location: "F:/DaTech/Production/f1_data_project/airflow/data/raw/location_*_extracted.parquet"
+          meta:
+            external_location: "read_parquet('{{ env_var('F1_RAW_DATA_PATH', 'F:/DaTech/f1_data_project/airflow/data/raw') }}/location_*_extracted.parquet', union_by_name=true)"
+          
+      - name: weather
+        description: "Track and air temperature, wind, and rainfall"
+        config:
+          meta:
+            external_location: "read_parquet('{{ env_var('F1_RAW_DATA_PATH', 'F:/DaTech/f1_data_project/airflow/data/raw') }}/weather_*_extracted.parquet', union_by_name=true)"
+
+      # 5. Pitlane & Strategy
+      - name: pit
+        description: "Pit lane timing and stop durations"
+        config:
+          meta:
+            external_location: "read_parquet('{{ env_var('F1_RAW_DATA_PATH', 'F:/DaTech/f1_data_project/airflow/data/raw') }}/pit_*_extracted.parquet', union_by_name=true)"
+          
+      - name: stints
+        description: "Tire compound usage and stint lengths"
+        config:
+          meta:
+            external_location: "read_parquet('{{ env_var('F1_RAW_DATA_PATH', 'F:/DaTech/f1_data_project/airflow/data/raw') }}/stints_*_extracted.parquet', union_by_name=true)"
+
+      # 6. Communications & Control
+      - name: team_radio
+        description: "Driver-to-pit radio communication transcripts/links"
+        config:
+          meta:
+            external_location: "read_parquet('{{ env_var('F1_RAW_DATA_PATH', 'F:/DaTech/f1_data_project/airflow/data/raw') }}/team_radio_*_extracted.parquet', union_by_name=true)"
+          
+      - name: race_control
+        description: "Flags, safety cars, and incident messages"
+        config:
+          meta:
+            external_location: "read_parquet('{{ env_var('F1_RAW_DATA_PATH', 'F:/DaTech/f1_data_project/airflow/data/raw') }}/race_control_*_extracted.parquet', union_by_name=true)"
+
+      - name: radio_transcripts
+        description: "OPTIONAL speech-to-text of team radio, written by modules/radio_transcriber.py (only exists when transcription is enabled)"
+        config:
+          meta:
+            external_location: "read_parquet('{{ env_var('F1_RAW_DATA_PATH', 'F:/DaTech/f1_data_project/airflow/data/raw') }}/radio_transcripts_*_extracted.parquet', union_by_name=true)"
 ```
 
-**Why three tables use `read_parquet(..., union_by_name=true)`**
+**Why every table now uses `read_parquet(..., union_by_name=true)`**
 
-Each Parquet file is written separately, and DuckDB normally infers a column's type from the **first** file it reads. If `intervals` for session A stores gaps as numbers but session B contains `"+1 LAP"` strings, DuckDB hits a conversion error when it reaches session B. `union_by_name=true` tells DuckDB to **line files up by column name and reconcile their types**. In the build, this was confirmed as the fix for `intervals`. The same wrapper was recommended for `race_control` and `session_result` because they showed the same kind of cross-file drift (empty files and mixed duration shapes); that recommendation was not separately confirmed by a re-run in the logs. If you see a similar conversion error on another table, wrap that table the same way. **Chapter 9 tells the full story.**
+Each Parquet file is written separately, and DuckDB normally infers a column's type from the **first** file it reads. If `intervals` for session A stores gaps as numbers but session B contains `"+1 LAP"` strings, DuckDB hits a conversion error when it reaches session B. `union_by_name=true` tells DuckDB to **line files up by column name and reconcile their types**. In the first edition only `intervals`, `race_control` and `session_result` had it; the second edition applies it to **all** tables. The extractor now adds run-metadata columns (Chapter 3), so files written before and after that change have different column sets, and without `union_by_name` DuckDB would have to guess. **Chapter 9 tells the full story of the `+2 LAPS` incident.**
+
+**Three other changes to this file in the second edition**
+
+* **`F1_RAW_DATA_PATH`:** the raw folder comes from an environment variable (default: your existing `F:/` path), so the same file works in the Airflow container and in CI.
+* **`schema: ...` (line 5):** the name of the BigQuery dataset the raw tables are loaded into (Chapter 10). DuckDB ignores it, because it reads the files through `external_location`.
+* **`config: meta: external_location`:** dbt 1.10 and later warn when `meta` sits directly on a source table and ask for it under `config`. Moving it silences the warning, and dbt-duckdb reads it from the same place.
 
 #### **Task 3: Write Your First Staging Model**
 
@@ -1635,7 +2208,7 @@ dbt run --select stg_laps
 
 dbt compiles the file (replacing `{{ source(...) }}` with the real read of your Parquet files) and creates a **view** in DuckDB.
 
-#### **Task 4: The Complete Staging Layer (18 Models)**
+#### **Task 4: The Complete Staging Layer (19 Models)**
 
 Create each file below in **dbt_f1_transformations/models/staging/**. The pattern is identical every time: a CTE called `raw_<name>` selects from the source, and a second CTE `renamed_and_casted` renames and casts.
 
@@ -1643,24 +2216,29 @@ Create each file below in **dbt_f1_transformations/models/staging/**. The patter
 
 ```sql
 WITH raw_drivers AS (
+    -- dbt will compile this source function into a DuckDB command
+    -- to read your local files based on the sources.yml meta tag!
     SELECT * FROM {{ source('openf1_raw', 'drivers') }}
 ),
 
 renamed_and_casted AS (
     SELECT
-        CAST(driver_number AS INTEGER) AS driver_number,
-        CAST(session_key AS INTEGER) AS session_key,
-        CAST(meeting_key AS INTEGER) AS meeting_key,
+        CAST(driver_number AS {{ f1_type('int') }}) AS driver_number,
+        CAST(session_key AS {{ f1_type('int') }}) AS session_key,
+        CAST(meeting_key AS {{ f1_type('int') }}) AS meeting_key,
         
         full_name,
         name_acronym AS driver_acronym,
         team_name,
         team_colour AS team_color_hex,
-        country_code,
+        country_code, -- Fixed: Added missing comma here to prevent aliasing
         
+        -- Passed the URL through cleanly
         headshot_url
 
     FROM raw_drivers
+    -- Let's filter out any null driver numbers just in case 
+    -- the API returned an empty row
     WHERE driver_number IS NOT NULL
 )
 
@@ -1675,14 +2253,14 @@ WITH raw_championship_drivers AS (
 ),
 renamed_and_casted AS (
     SELECT
-        CAST(session_key AS INTEGER) AS session_key,
-        CAST(meeting_key AS INTEGER) AS meeting_key,
-        CAST(driver_number AS INTEGER) AS driver_number,
+        CAST(session_key AS {{ f1_type('int') }}) AS session_key,
+        CAST(meeting_key AS {{ f1_type('int') }}) AS meeting_key,
+        CAST(driver_number AS {{ f1_type('int') }}) AS driver_number,
         
         position_start,
         position_current,
-        CAST(points_start AS DOUBLE) AS points_start,
-        CAST(points_current AS DOUBLE) AS points_current
+        CAST(points_start AS {{ f1_type('double') }}) AS points_start,
+        CAST(points_current AS {{ f1_type('double') }}) AS points_current
     FROM raw_championship_drivers
     WHERE driver_number IS NOT NULL
 )
@@ -1697,14 +2275,14 @@ WITH raw_championship_teams AS (
 ),
 renamed_and_casted AS (
     SELECT
-        CAST(session_key AS INTEGER) AS session_key,
-        CAST(meeting_key AS INTEGER) AS meeting_key,
+        CAST(session_key AS {{ f1_type('int') }}) AS session_key,
+        CAST(meeting_key AS {{ f1_type('int') }}) AS meeting_key,
         
         team_name,
         position_start,
         position_current,
-        CAST(points_start AS DOUBLE) AS points_start,
-        CAST(points_current AS DOUBLE) AS points_current
+        CAST(points_start AS {{ f1_type('double') }}) AS points_start,
+        CAST(points_current AS {{ f1_type('double') }}) AS points_current
     FROM raw_championship_teams
 )
 SELECT * FROM renamed_and_casted
@@ -1718,9 +2296,9 @@ WITH raw_meetings AS (
 ),
 renamed_and_casted AS (
     SELECT
-        CAST(meeting_key AS INTEGER) AS meeting_key,
-        CAST(year AS INTEGER) AS year,
-        CAST(circuit_key AS INTEGER) AS circuit_key,
+        CAST(meeting_key AS {{ f1_type('int') }}) AS meeting_key,
+        CAST(year AS {{ f1_type('int') }}) AS year,
+        CAST(circuit_key AS {{ f1_type('int') }}) AS circuit_key,
         
         meeting_name,
         meeting_official_name,
@@ -1728,7 +2306,7 @@ renamed_and_casted AS (
         country_key,
         country_code,
         circuit_short_name,
-        CAST(date_start AS TIMESTAMP) AS date_start,
+        CAST(date_start AS {{ f1_type('timestamp') }}) AS date_start,
         gmt_offset
     FROM raw_meetings
     WHERE meeting_key IS NOT NULL
@@ -1744,15 +2322,17 @@ WITH raw_sessions AS (
 ),
 renamed_and_casted AS (
     SELECT
-        CAST(session_key AS INTEGER) AS session_key,
-        CAST(meeting_key AS INTEGER) AS meeting_key,
-        CAST(circuit_key AS INTEGER) AS circuit_key,
-        CAST(year AS INTEGER) AS year,
+        CAST(session_key AS {{ f1_type('int') }}) AS session_key,
+        CAST(meeting_key AS {{ f1_type('int') }}) AS meeting_key,
+        CAST(circuit_key AS {{ f1_type('int') }}) AS circuit_key,
+        CAST(year AS {{ f1_type('int') }}) AS year,
         
         session_name,
-        session_type,
-        CAST(date_start AS TIMESTAMP) AS date_start,
-        CAST(date_end AS TIMESTAMP) AS date_end,
+        {# OpenF1 reports a Sprint with session_type 'Race' and only session_name 'Sprint'. Everything downstream (points scale, grid mapping, race-only
+           models) expects session_type 'Sprint', so normalise here. Without it sprints were scored on the Race points scale. #}
+        CASE WHEN session_name = 'Sprint' THEN 'Sprint' ELSE session_type END AS session_type,
+        CAST(date_start AS {{ f1_type('timestamp') }}) AS date_start,
+        CAST(date_end AS {{ f1_type('timestamp') }}) AS date_end,
         gmt_offset
     FROM raw_sessions
     WHERE session_key IS NOT NULL
@@ -1766,28 +2346,31 @@ SELECT * FROM renamed_and_casted
 WITH raw_session_result AS (
     SELECT * FROM {{ source('openf1_raw', 'session_result') }}
 ),
-renamed_and_casted AS (
+typed AS (
     SELECT
-        CAST(session_key AS INTEGER) AS session_key,
-        CAST(meeting_key AS INTEGER) AS meeting_key,
-        CAST(driver_number AS INTEGER) AS driver_number,
-        CAST(position AS INTEGER) AS position,
-        
-        -- Defensive fix: Read as VARCHAR to accept string arrays or standalone doubles,
-        -- then use regexp to isolate the first core duration metric if formatted as an array.
-        CASE 
-            WHEN REGEXP_MATCHES(CAST(duration AS VARCHAR), '^\[.*\]$') 
-            THEN TRY_CAST(STR_SPLIT(REPLACE(REPLACE(CAST(duration AS VARCHAR), '[', ''), ']', ''), ',')[1] AS DOUBLE)
-            ELSE TRY_CAST(CAST(duration AS VARCHAR) AS DOUBLE)
-        END AS duration,
-        
-        dns,
-        dsq
-        
+        CAST(session_key AS {{ f1_type('int') }}) AS session_key,
+        CAST(meeting_key AS {{ f1_type('int') }}) AS meeting_key,
+        CAST(driver_number AS {{ f1_type('int') }}) AS driver_number,
+        {{ f1_try_cast_fn() }}(position AS {{ f1_type('int') }}) AS position,
+        {{ f1_try_cast_fn() }}(number_of_laps AS {{ f1_type('int') }}) AS number_of_laps,
+        COALESCE(CAST(dnf AS {{ f1_type('bool') }}), FALSE) AS dnf,
+        COALESCE(CAST(dns AS {{ f1_type('bool') }}), FALSE) AS dns,
+        COALESCE(CAST(dsq AS {{ f1_type('bool') }}), FALSE) AS dsq,
+        -- Race: a number or text. Qualifying: a JSON array string like '[q1, q2, q3]'.
+        CAST(duration AS {{ f1_type('string') }}) AS duration_raw,
+        CAST(gap_to_leader AS {{ f1_type('string') }}) AS gap_to_leader_raw
     FROM raw_session_result
     WHERE driver_number IS NOT NULL
 )
-SELECT * FROM renamed_and_casted
+SELECT
+    *,
+    CASE WHEN duration_raw LIKE '[%' THEN NULL ELSE {{ f1_try_cast_fn() }}(duration_raw AS {{ f1_type('double') }}) END AS race_time_seconds,
+    {{ f1_try_cast_fn() }}({{ f1_json_scalar("CASE WHEN duration_raw LIKE '[%' THEN duration_raw END", '$[0]') }} AS {{ f1_type('double') }}) AS q1_seconds,
+    {{ f1_try_cast_fn() }}({{ f1_json_scalar("CASE WHEN duration_raw LIKE '[%' THEN duration_raw END", '$[1]') }} AS {{ f1_type('double') }}) AS q2_seconds,
+    {{ f1_try_cast_fn() }}({{ f1_json_scalar("CASE WHEN duration_raw LIKE '[%' THEN duration_raw END", '$[2]') }} AS {{ f1_type('double') }}) AS q3_seconds,
+    CASE WHEN gap_to_leader_raw LIKE '[%' THEN NULL ELSE {{ f1_try_cast_fn() }}(gap_to_leader_raw AS {{ f1_type('double') }}) END AS gap_to_leader_seconds,
+    CASE WHEN gap_to_leader_raw LIKE '+%LAP%' THEN gap_to_leader_raw END AS gap_to_leader_lapped_text
+FROM typed
 ```
 
 **`models/staging/stg_starting_grid.sql`**
@@ -1798,12 +2381,12 @@ WITH raw_starting_grid AS (
 ),
 renamed_and_casted AS (
     SELECT
-        CAST(session_key AS INTEGER) AS session_key,
-        CAST(meeting_key AS INTEGER) AS meeting_key,
-        CAST(driver_number AS INTEGER) AS driver_number,
+        CAST(session_key AS {{ f1_type('int') }}) AS session_key,
+        CAST(meeting_key AS {{ f1_type('int') }}) AS meeting_key,
+        CAST(driver_number AS {{ f1_type('int') }}) AS driver_number,
         
         -- Changed from grid_position to position based on likely API schema
-        CAST(position AS INTEGER) AS grid_position
+        CAST(position AS {{ f1_type('int') }}) AS grid_position
         
     FROM raw_starting_grid
     WHERE driver_number IS NOT NULL
@@ -1819,29 +2402,51 @@ WITH raw_laps AS (
 ),
 renamed_and_casted AS (
     SELECT
-        CAST(session_key AS INTEGER) AS session_key,
-        CAST(meeting_key AS INTEGER) AS meeting_key,
-        CAST(driver_number AS INTEGER) AS driver_number,
-        
-        CAST(lap_number AS INTEGER) AS lap_number,
-        lap_duration,
-        
-        -- The actual time spent in each sector
-        duration_sector_1,
-        duration_sector_2,
-        duration_sector_3,
-        
-        -- The micro-sector arrays (useful for detailed telemetry later)
+        CAST(session_key AS {{ f1_type('int') }}) AS session_key,
+        CAST(meeting_key AS {{ f1_type('int') }}) AS meeting_key,
+        CAST(driver_number AS {{ f1_type('int') }}) AS driver_number,
+
+        CAST(lap_number AS {{ f1_type('int') }}) AS lap_number,
+        -- Lap start time: the key that lets weather, position, gaps and telemetry be aligned to a lap
+        CAST(date_start AS {{ f1_type('timestamp') }}) AS date_start,
+        {{ f1_try_cast_fn() }}(lap_duration AS {{ f1_type('double') }}) AS lap_duration,
+
+        {{ f1_try_cast_fn() }}(duration_sector_1 AS {{ f1_type('double') }}) AS duration_sector_1,
+        {{ f1_try_cast_fn() }}(duration_sector_2 AS {{ f1_type('double') }}) AS duration_sector_2,
+        {{ f1_try_cast_fn() }}(duration_sector_3 AS {{ f1_type('double') }}) AS duration_sector_3,
+
+        -- Speed trap readings (km/h): intermediate 1, intermediate 2, and the finish-line speed trap
+        {{ f1_try_cast_fn() }}(i1_speed AS {{ f1_type('int') }}) AS speed_trap_i1,
+        {{ f1_try_cast_fn() }}(i2_speed AS {{ f1_type('int') }}) AS speed_trap_i2,
+        {{ f1_try_cast_fn() }}(st_speed AS {{ f1_type('int') }}) AS speed_trap_finish,
+
         segments_sector_1,
         segments_sector_2,
         segments_sector_3,
-        
-        is_pit_out_lap
-        
+
+        COALESCE(is_pit_out_lap, FALSE) AS is_pit_out_lap
     FROM raw_laps
     WHERE driver_number IS NOT NULL
+),
+deduplicated_laps AS (
+    -- First, filter out exact duplicate lap numbers
+    SELECT * FROM renamed_and_casted
+    QUALIFY ROW_NUMBER() OVER (
+        PARTITION BY session_key, driver_number, lap_number 
+        ORDER BY date_start ASC
+    ) = 1
 )
-SELECT * FROM renamed_and_casted
+-- Finally, filter out chronological anomalies using LAG
+SELECT * 
+FROM deduplicated_laps
+QUALIFY LAG(date_start) OVER (
+    PARTITION BY session_key, driver_number 
+    ORDER BY lap_number
+) IS NULL 
+OR date_start > LAG(date_start) OVER (
+    PARTITION BY session_key, driver_number 
+    ORDER BY lap_number
+)
 ```
 
 **`models/staging/stg_stints.sql`**
@@ -1852,19 +2457,22 @@ WITH raw_stints AS (
 ),
 renamed_and_casted AS (
     SELECT
-        CAST(session_key AS INTEGER) AS session_key,
-        CAST(meeting_key AS INTEGER) AS meeting_key,
-        CAST(driver_number AS INTEGER) AS driver_number,
+        CAST(session_key AS {{ f1_type('int') }}) AS session_key,
+        CAST(meeting_key AS {{ f1_type('int') }}) AS meeting_key,
+        CAST(driver_number AS {{ f1_type('int') }}) AS driver_number,
         
-        CAST(stint_number AS INTEGER) AS stint_number,
+        CAST(stint_number AS {{ f1_type('int') }}) AS stint_number,
         compound AS tyre_compound,
-        CAST(tyre_age_at_start AS INTEGER) AS tyre_age_at_start,
-        CAST(lap_start AS INTEGER) AS lap_start,
-        CAST(lap_end AS INTEGER) AS lap_end
+        CAST(tyre_age_at_start AS {{ f1_type('int') }}) AS tyre_age_at_start,
+        CAST(lap_start AS {{ f1_type('int') }}) AS lap_start,
+        CAST(lap_end AS {{ f1_type('int') }}) AS lap_end
     FROM raw_stints
     WHERE driver_number IS NOT NULL
 )
-SELECT * FROM renamed_and_casted
+SELECT * 
+FROM renamed_and_casted
+WHERE lap_end >= lap_start 
+  AND tyre_age_at_start >= 0
 ```
 
 **`models/staging/stg_pit.sql`**
@@ -1875,12 +2483,13 @@ WITH raw_pit AS (
 ),
 renamed_and_casted AS (
     SELECT
-        CAST(session_key AS INTEGER) AS session_key,
-        CAST(meeting_key AS INTEGER) AS meeting_key,
-        CAST(driver_number AS INTEGER) AS driver_number,
-        
-        CAST(lap_number AS INTEGER) AS lap_number,
-        pit_duration
+        CAST(session_key AS {{ f1_type('int') }}) AS session_key,
+        CAST(meeting_key AS {{ f1_type('int') }}) AS meeting_key,
+        CAST(driver_number AS {{ f1_type('int') }}) AS driver_number,
+
+        CAST(lap_number AS {{ f1_type('int') }}) AS lap_number,
+        CAST(date AS {{ f1_type('timestamp') }}) AS pit_timestamp,
+        {{ f1_try_cast_fn() }}(pit_duration AS {{ f1_type('double') }}) AS pit_duration
     FROM raw_pit
     WHERE driver_number IS NOT NULL
 )
@@ -1895,12 +2504,12 @@ WITH raw_position AS (
 ),
 renamed_and_casted AS (
     SELECT
-        CAST(session_key AS INTEGER) AS session_key,
-        CAST(meeting_key AS INTEGER) AS meeting_key,
-        CAST(driver_number AS INTEGER) AS driver_number,
+        CAST(session_key AS {{ f1_type('int') }}) AS session_key,
+        CAST(meeting_key AS {{ f1_type('int') }}) AS meeting_key,
+        CAST(driver_number AS {{ f1_type('int') }}) AS driver_number,
         
-        CAST(position AS INTEGER) AS position,
-        CAST(date AS TIMESTAMP) AS position_timestamp
+        CAST(position AS {{ f1_type('int') }}) AS position,
+        CAST(date AS {{ f1_type('timestamp') }}) AS position_timestamp
     FROM raw_position
     WHERE driver_number IS NOT NULL
 )
@@ -1915,15 +2524,14 @@ WITH raw_intervals AS (
 ),
 renamed_and_casted AS (
     SELECT
-        CAST(session_key AS INTEGER) AS session_key,
-        CAST(meeting_key AS INTEGER) AS meeting_key,
-        CAST(driver_number AS INTEGER) AS driver_number,
-        
-        -- Force these to strings so DuckDB doesn't accidentally 
-        -- infer them as doubles and crash on "+2 LAPS"
-        CAST(interval AS VARCHAR) AS interval_raw,
-        CAST(gap_to_leader AS VARCHAR) AS gap_to_leader_raw
-        
+        CAST(session_key AS {{ f1_type('int') }}) AS session_key,
+        CAST(meeting_key AS {{ f1_type('int') }}) AS meeting_key,
+        CAST(driver_number AS {{ f1_type('int') }}) AS driver_number,
+        CAST(date AS {{ f1_type('timestamp') }}) AS interval_timestamp,
+
+        -- Kept as text: the API mixes numbers with strings such as '+1 LAP' (see fct_race_intervals)
+        CAST({{ adapter.quote('interval') }} AS {{ f1_type('string') }}) AS interval_raw,
+        CAST(gap_to_leader AS {{ f1_type('string') }}) AS gap_to_leader_raw
     FROM raw_intervals
     WHERE driver_number IS NOT NULL
 )
@@ -1938,15 +2546,13 @@ WITH raw_overtakes AS (
 ),
 renamed_and_casted AS (
     SELECT
-        CAST(session_key AS INTEGER) AS session_key,
-        CAST(meeting_key AS INTEGER) AS meeting_key,
-        
-        CAST(overtaking_driver_number AS INTEGER) AS overtaking_driver_number,
-        CAST(overtaken_driver_number AS INTEGER) AS overtaken_driver_number,
-        
-        -- Removed lap_number and added position based on the API's actual schema
-        CAST(position AS INTEGER) AS position
-        
+        CAST(session_key AS {{ f1_type('int') }}) AS session_key,
+        CAST(meeting_key AS {{ f1_type('int') }}) AS meeting_key,
+        CAST(date AS {{ f1_type('timestamp') }}) AS overtake_timestamp,
+
+        CAST(overtaking_driver_number AS {{ f1_type('int') }}) AS overtaking_driver_number,
+        CAST(overtaken_driver_number AS {{ f1_type('int') }}) AS overtaken_driver_number,
+        CAST(position AS {{ f1_type('int') }}) AS position
     FROM raw_overtakes
 )
 SELECT * FROM renamed_and_casted
@@ -1960,17 +2566,18 @@ WITH raw_race_control AS (
 ),
 renamed_and_casted AS (
     SELECT
-        CAST(session_key AS INTEGER) AS session_key,
-        CAST(meeting_key AS INTEGER) AS meeting_key,
-        
-        -- Defensive fix: TRY_CAST prevents type-inference crashes 
-        -- if an empty parquet file sets the column layout to NULL
-        TRY_CAST(lap_number AS INTEGER) AS lap_number,
-        
-        CAST(date AS TIMESTAMP) AS race_control_timestamp,
+        CAST(session_key AS {{ f1_type('int') }}) AS session_key,
+        CAST(meeting_key AS {{ f1_type('int') }}) AS meeting_key,
+        -- TRY_CAST: an all-empty Parquet column can be typed as text, which would crash a plain CAST
+        {{ f1_try_cast_fn() }}(lap_number AS {{ f1_type('int') }}) AS lap_number,
+        {{ f1_try_cast_fn() }}(driver_number AS {{ f1_type('int') }}) AS driver_number,
+
+        CAST(date AS {{ f1_type('timestamp') }}) AS race_control_timestamp,
         category,
         message,
-        flag
+        flag,
+        scope,
+        {{ f1_try_cast_fn() }}(sector AS {{ f1_type('int') }}) AS sector
     FROM raw_race_control
 )
 SELECT * FROM renamed_and_casted
@@ -1984,11 +2591,11 @@ WITH raw_team_radio AS (
 ),
 renamed_and_casted AS (
     SELECT
-        CAST(session_key AS INTEGER) AS session_key,
-        CAST(meeting_key AS INTEGER) AS meeting_key,
-        CAST(driver_number AS INTEGER) AS driver_number,
+        CAST(session_key AS {{ f1_type('int') }}) AS session_key,
+        CAST(meeting_key AS {{ f1_type('int') }}) AS meeting_key,
+        CAST(driver_number AS {{ f1_type('int') }}) AS driver_number,
         
-        CAST(date AS TIMESTAMP) AS radio_timestamp,
+        CAST(date AS {{ f1_type('timestamp') }}) AS radio_timestamp,
         recording_url
     FROM raw_team_radio
     WHERE driver_number IS NOT NULL
@@ -2004,16 +2611,17 @@ WITH raw_weather AS (
 ),
 renamed_and_casted AS (
     SELECT
-        CAST(session_key AS INTEGER) AS session_key,
-        CAST(meeting_key AS INTEGER) AS meeting_key,
-        
-        CAST(date AS TIMESTAMP) AS weather_timestamp,
-        CAST(air_temperature AS DOUBLE) AS air_temperature,
-        CAST(track_temperature AS DOUBLE) AS track_temperature,
-        CAST(humidity AS DOUBLE) AS humidity,
-        CAST(rainfall AS INTEGER) AS rainfall_flag,
-        CAST(wind_speed AS DOUBLE) AS wind_speed,
-        CAST(wind_direction AS INTEGER) AS wind_direction
+        CAST(session_key AS {{ f1_type('int') }}) AS session_key,
+        CAST(meeting_key AS {{ f1_type('int') }}) AS meeting_key,
+
+        CAST(date AS {{ f1_type('timestamp') }}) AS weather_timestamp,
+        CAST(air_temperature AS {{ f1_type('double') }}) AS air_temperature,
+        CAST(track_temperature AS {{ f1_type('double') }}) AS track_temperature,
+        CAST(humidity AS {{ f1_type('double') }}) AS humidity,
+        {{ f1_try_cast_fn() }}(pressure AS {{ f1_type('double') }}) AS pressure,
+        CAST(rainfall AS {{ f1_type('int') }}) AS rainfall_flag,
+        CAST(wind_speed AS {{ f1_type('double') }}) AS wind_speed,
+        CAST(wind_direction AS {{ f1_type('int') }}) AS wind_direction
     FROM raw_weather
 )
 SELECT * FROM renamed_and_casted
@@ -2027,17 +2635,17 @@ WITH raw_car_data AS (
 ),
 renamed_and_casted AS (
     SELECT
-        CAST(session_key AS INTEGER) AS session_key,
-        CAST(meeting_key AS INTEGER) AS meeting_key,
-        CAST(driver_number AS INTEGER) AS driver_number,
+        CAST(session_key AS {{ f1_type('int') }}) AS session_key,
+        CAST(meeting_key AS {{ f1_type('int') }}) AS meeting_key,
+        CAST(driver_number AS {{ f1_type('int') }}) AS driver_number,
         
-        CAST(date AS TIMESTAMP) AS telemetry_timestamp,
-        CAST(rpm AS INTEGER) AS rpm,
-        CAST(speed AS INTEGER) AS speed,
-        CAST(n_gear AS INTEGER) AS gear,
-        CAST(throttle AS INTEGER) AS throttle,
-        CAST(brake AS INTEGER) AS brake,
-        CAST(drs AS INTEGER) AS drs
+        CAST(date AS {{ f1_type('timestamp') }}) AS telemetry_timestamp,
+        CAST(rpm AS {{ f1_type('int') }}) AS rpm,
+        CAST(speed AS {{ f1_type('int') }}) AS speed,
+        CAST(n_gear AS {{ f1_type('int') }}) AS gear,
+        CAST(throttle AS {{ f1_type('int') }}) AS throttle,
+        CAST(brake AS {{ f1_type('int') }}) AS brake,
+        CAST(drs AS {{ f1_type('int') }}) AS drs
     FROM raw_car_data
     WHERE driver_number IS NOT NULL
 )
@@ -2052,27 +2660,67 @@ WITH raw_location AS (
 ),
 renamed_and_casted AS (
     SELECT
-        CAST(session_key AS INTEGER) AS session_key,
-        CAST(meeting_key AS INTEGER) AS meeting_key,
-        CAST(driver_number AS INTEGER) AS driver_number,
+        CAST(session_key AS {{ f1_type('int') }}) AS session_key,
+        CAST(meeting_key AS {{ f1_type('int') }}) AS meeting_key,
+        CAST(driver_number AS {{ f1_type('int') }}) AS driver_number,
         
-        CAST(date AS TIMESTAMP) AS location_timestamp,
-        CAST(x AS DOUBLE) AS x_coordinate,
-        CAST(y AS DOUBLE) AS y_coordinate,
-        CAST(z AS DOUBLE) AS z_coordinate
+        CAST(date AS {{ f1_type('timestamp') }}) AS location_timestamp,
+        CAST(x AS {{ f1_type('double') }}) AS x_coordinate,
+        CAST(y AS {{ f1_type('double') }}) AS y_coordinate,
+        CAST(z AS {{ f1_type('double') }}) AS z_coordinate
     FROM raw_location
     WHERE driver_number IS NOT NULL
 )
 SELECT * FROM renamed_and_casted
 ```
 
+**`models/staging/stg_radio_transcripts.sql`**
+
+```sql
+{# OPTIONAL source: when var enable_radio_transcripts is false (default) this is an empty, correctly typed table, so the
+   project builds before any transcript file exists (a source glob with no files is a hard error in DuckDB). #}
+{% if var('enable_radio_transcripts', false) %}
+SELECT
+    {{ f1_cast('session_key', 'int') }} AS session_key,
+    {{ f1_cast('meeting_key', 'int') }} AS meeting_key,
+    {{ f1_cast('driver_number', 'int') }} AS driver_number,
+    {{ f1_cast('date', 'timestamp') }} AS radio_timestamp,
+    recording_url,
+    {{ f1_cast('transcript', 'string') }} AS transcript,
+    {{ f1_cast('language', 'string') }} AS language,
+    {{ f1_try_cast('audio_duration_seconds', 'double') }} AS audio_duration_seconds,
+    {{ f1_cast('error', 'string') }} AS transcription_error
+FROM {{ source('openf1_raw', 'radio_transcripts') }}
+WHERE driver_number IS NOT NULL
+{% else %}
+SELECT
+    {{ f1_cast('NULL', 'int') }} AS session_key,
+    {{ f1_cast('NULL', 'int') }} AS meeting_key,
+    {{ f1_cast('NULL', 'int') }} AS driver_number,
+    {{ f1_cast('NULL', 'timestamp') }} AS radio_timestamp,
+    {{ f1_cast('NULL', 'string') }} AS recording_url,
+    {{ f1_cast('NULL', 'string') }} AS transcript,
+    {{ f1_cast('NULL', 'string') }} AS language,
+    {{ f1_cast('NULL', 'double') }} AS audio_duration_seconds,
+    {{ f1_cast('NULL', 'string') }} AS transcription_error
+FROM (SELECT 1) AS one_row
+WHERE FALSE
+{% endif %}
+```
 
 **Notes on specific models**
 
 * **`stg_car_data` and `stg_location`:** `date` is renamed to `telemetry_timestamp` or similar, to avoid the reserved-feeling word `date`.
-* **`stg_intervals`:** values are kept as **text** (`interval_raw`, `gap_to_leader_raw`) because the API mixes numbers and strings such as `+1 LAP`. The marts convert them safely.
-* **`stg_race_control`:** `TRY_CAST` turns un-castable values into `NULL` instead of crashing, which matters when an empty Parquet file makes DuckDB guess the wrong type.
-* **`stg_session_result`:** `duration` can be a single number or an array of qualifying times. The `CASE` handles both and keeps the first value.
+* **`stg_laps` (changed):** keeps `date_start`, the **lap start time**. The first edition dropped it, and that single omission meant weather, position, gaps and telemetry could not be aligned to a lap at all: it is the root cause of most of the new analytics in Chapter 6. It also keeps the three speed-trap readings.
+* **`stg_intervals` (changed):** values stay **text** (`interval_raw`, `gap_to_leader_raw`) because the API mixes numbers and strings such as `+1 LAP`, and it now keeps the sample **timestamp**. The `interval` column is quoted through `adapter.quote`, because `interval` is a reserved word in BigQuery.
+* **`stg_pit` and `stg_overtakes` (changed):** both keep their event timestamps, which the undercut and overtake analysis in Chapter 6 joins on.
+* **`stg_sessions` (changed):** OpenF1 reports a Sprint with `session_type = 'Race'` and only `session_name = 'Sprint'`. The model rewrites those rows to `session_type = 'Sprint'`, because everything downstream (the points scale, grid mapping, race-only models) expects it. Without this, sprints were scored on the Race points scale.
+* **`stg_laps` (changed):** keeps one row per `(session_key, driver_number, lap_number)` (the earliest `date_start`) and drops any lap whose start is not later than the previous lap's, so duplicated or out-of-order source rows cannot reach the models or break the lap-order test (Chapter 6).
+* **`stg_stints` (changed):** drops stints that end before they start or have a negative tyre age.
+* **`stg_race_control`:** `TRY_CAST` turns un-castable values into `NULL` instead of crashing, which matters when an empty Parquet file makes DuckDB guess the wrong type. It now also keeps `scope`, `sector` and `driver_number`.
+* **`stg_session_result` (changed):** `duration` can be a single number (a race) or a JSON array of qualifying times. It is split into `race_time_seconds` and `q1_seconds`, `q2_seconds`, `q3_seconds`, and `gap_to_leader` into a number or the lapped text.
+* **`stg_radio_transcripts` (new):** the staging model for optional radio transcripts. While `enable_radio_transcripts` is `false` (the default) it returns an **empty, correctly typed table**, because pointing a source at a glob with no files is a hard error in DuckDB. That keeps the project building before any transcript file exists.
+* **Why `{{ f1_type('int') }}` and `{{ f1_try_cast_fn() }}` appear instead of `INTEGER` and `TRY_CAST`:** they are portable macros (Chapter 10) that produce the right type name and cast function for DuckDB or BigQuery. On DuckDB `'int'` means `INTEGER` (and `INT64` on BigQuery).
 
 #### **Task 5: Build and Verify the Layer**
 
@@ -2080,7 +2728,7 @@ SELECT * FROM renamed_and_casted
 dbt run --select staging
 ```
 
-Expect 18 successes. Then look inside the database with the DuckDB command line (or any tool from Chapter 9):
+Expect 19 successes. Then look inside the database with the DuckDB command line (or any tool from Chapter 9):
 
 ```sql
 SELECT COUNT(*) FROM stg_laps;
@@ -2091,7 +2739,7 @@ SELECT * FROM stg_drivers LIMIT 5;
 
 * **The Problem:** `Could not find profile named 'dbt_f1_transformations'`.
 * **Why it Happens:** the `profile:` value in `dbt_project.yml` does not match the top-level key in `profiles.yml`, or `profiles.yml` is not where dbt looks.
-* **The Solution:** make the two names identical and keep the file in `~/.dbt/`, or pass `--profiles-dir <folder>`.
+* **The Solution:** make the two names identical. dbt looks for `profiles.yml` in the folder you run it from first (where the second edition keeps it), then in `~/.dbt/`; or pass `--profiles-dir <folder>`.
 
 * **The Problem:** `IO Error: No files found that match the pattern ...`.
 * **Why it Happens:** the glob in `sources.yml` does not match any file: wrong root path, wrong file naming, or Airflow has not produced that endpoint yet.
@@ -2101,7 +2749,7 @@ SELECT * FROM stg_drivers LIMIT 5;
 * **Why it Happens:** `external_location` was placed at the wrong nesting level.
 * **The Solution:** nest it under `config:` exactly as shown.
 
-* **The Problem:** staging models contained hard-coded file paths, so moving the data meant editing 18 files.
+* **The Problem:** staging models contained hard-coded file paths, so moving the data meant editing 19 files.
 * **Why it Happens:** early models used `read_parquet('F:/...')` directly.
 * **The Solution:** always `SELECT * FROM {{ source('openf1_raw', '<table>') }}`. Paths then live in one file.
 
@@ -2117,6 +2765,15 @@ SELECT * FROM stg_drivers LIMIT 5;
 * **Why it Happens:** the file was not saved in the editor, or a stale `target/` folder is being used.
 * **The Solution:** save, then run `dbt clean` followed by `dbt run`.
 
+* **The Problem (second edition, hit on the author's machine):** `dbt build` stops with `INTERNAL Error: Failed to bind column reference "session_key" [38.0]: inequal types (INTEGER != BIGINT)`, first in `dim_drivers` and `dim_driver_session`, and everything downstream is skipped (112 passed, 2 errors, 9 skipped).
+* **Why it Happens:** a **bug in DuckDB 1.5's query optimizer**. It appeared with three ingredients together: Parquet integers are 64-bit (`BIGINT`), the staging model narrowed them with `CAST(... AS INTEGER)`, and a model kept "the latest row per key" with `ROW_NUMBER() ... WHERE row_num = 1`. The optimizer builds a plan that mixes the two types, and DuckDB's own consistency check rejects it. The models in this repository build on DuckDB 1.5.6 and 2.0.0 (both run for this edition), which is why this can pass on one machine and fail on another. Find your version with `python -c "import duckdb; print(duckdb.__version__)"`.
+* **Why it was first misdiagnosed:** the crash was first blamed on the `ASOF JOIN` models, and wrapping the CTEs that feed them in `OFFSET 0` (an optimizer barrier that forces DuckDB to evaluate the casts first) did make the build pass. Reproducing the crash in plain SQL showed it also happens **with no ASOF join at all**: even a bare `SELECT` on `dim_drivers`' query fails on 1.5.0, and a `QUALIFY` rewrite or an `OFFSET 0` barrier avoids it. So the barrier treats a symptom.
+* **The Solution:** remove the mismatch where it bites. `dim_drivers` and `dim_driver_session` now `CAST(... AS BIGINT)` their key columns (the SQL is in Chapter 6), so the type the optimizer sees matches Parquet's 64-bit integers. `make ci-test` was run for this edition and passes all 135 build and test nodes on DuckDB 1.5.6 and 2.0.0. `f1_type('int')` still produces `INTEGER` on DuckDB. If you hit a similar `INTERNAL Error` in your own model, `OFFSET 0` on the offending CTE is a reasonable stopgap.
+
+* **The Problem (second edition, hit on the author's machine):** the long `fct_telemetry` build finishes, then every test on it errors with `Not implemented Error: Cannot switch temporary directory after the current one has been used`.
+* **Why it Happens:** `temp_directory` was configured under the profile's `settings:`. dbt-duckdb re-applies **every** `settings` entry as `SET key = value` on each new cursor, and each test opens one. During the 85 minute build DuckDB spilled to disk and "used" the temporary directory, after which DuckDB 1.5 refuses to be told to switch it, even to the same path. (Reproduced in plain DuckDB 1.5.0: re-issuing the `SET` after a spill fails, while setting the directory when the connection is opened works.)
+* **The Solution:** put it under `config_options`, which is applied once when the connection opens. The shipped `profiles.yml` sets no `temp_directory`, so you only meet this error if you add one under `settings:`. `settings:` is fine for options that can change at any time, such as `memory_limit`.
+
 ---
 
 
@@ -2124,7 +2781,7 @@ SELECT * FROM stg_drivers LIMIT 5;
 
 ### **Chapter Overview**
 
-Staging gave you clean tables. The **marts** turn them into answers: *Who gained the most places? How old were the tyres on each lap? Which pit stops were slowest?* You will build **2 dimensions and 13 fact tables** here (the 14th fact table, telemetry, gets Chapter 7), test them, and generate lineage documentation. **[VERIFIED]**
+Staging gave you clean tables. The **marts** turn them into answers: *Who gained the most places? How old were the tyres on each lap? Which pit stops were slowest? Did the undercut work? How likely is a safety car in the next ten laps?* In this chapter you will build the **analytical spine** (`int_lap_context`), then **4 dimensions and about 20 fact tables** on top of it, test them, and generate lineage documentation. The second edition adds the pit-strategy models, the safety-car risk model, a **Monte Carlo strategy simulator** and the radio-message model. The telemetry marts get their own chapter (Chapter 7). **[VERIFIED]** for the original models; **[VERIFIED ON SYNTHETIC DATA]** for everything added in the second edition.
 
 **Concepts introduced in this chapter**
 
@@ -2133,10 +2790,14 @@ Staging gave you clean tables. The **marts** turn them into answers: *Who gained
 * **Range join:** joining on `BETWEEN` instead of equality, for example matching a lap to the stint whose `lap_start` and `lap_end` contain it.
 * **`TRY_CAST`:** like `CAST`, but returns `NULL` instead of failing when a value does not convert (`"+1 LAP"` as a number).
 * **Data tests:** assertions dbt runs as SQL, such as `not_null` and `unique`.
+* **The analytical spine (`int_lap_context`):** one row per driver per lap, carrying *everything* you want to know about that lap (tyre, pit flags, track status, weather, position, gaps). Every pace and strategy model reads from it, so each question is answered once, in one place.
+* **ASOF join (introduced in Chapter 4, used heavily here):** "attach the latest reading at or before this moment". It is how a lap is matched to the weather, position and gap readings that were current when it started.
+* **Grain:** the one thing a row represents (here: one driver, one lap). Most bugs in this chapter were a violated grain, and the `unique_combination_of_columns` tests exist to catch exactly that.
+* **Common random numbers (Task 7):** when comparing strategies by simulation, every strategy is run against the *same* simulated safety cars and lap-time noise, so a difference between strategies is the strategy, not luck.
 
 ### **Prerequisites**
 
-* Chapter 5 complete: all 18 staging views build.
+* Chapter 5 complete: all 19 staging views build.
 
 ### **Step by Step Procedures**
 
@@ -2146,21 +2807,418 @@ Marts are designed around questions, not around source tables. This project grou
 
 | Pillar | Question | Models |
 |---|---|---|
-| **Core dimensions** | Who and what? | `dim_drivers`, `dim_sessions` |
-| **Pace and tyres** | How fast, on which rubber? | `fct_lap_performance`, `fct_fastest_laps`, `fct_tire_strategy` |
-| **Race dynamics** | Who passed whom, who stopped? | `fct_overtakes`, `fct_driver_positions`, `fct_pit_stops`, `fct_race_intervals` |
-| **Results and standings** | Who won, who leads? | `fct_race_results`, `fct_championship_standings`, `fct_constructor_standings` |
-| **Context and incidents** | What was happening? | `fct_weather_impact`, `fct_lap_incidents`, `fct_team_radio` |
+| **Core dimensions** | Who and what? | `dim_drivers`, `dim_driver_session`, `dim_sessions`, `dim_circuits` |
+| **Pace and tyres** | How fast, on which rubber? | `fct_lap_performance`, `fct_fastest_laps`, `fct_stints`, `fct_tire_strategy`, `fct_compound_pace_model` |
+| **Race dynamics** | Who passed whom, who stopped, who got ahead? | `fct_overtakes`, `fct_driver_positions`, `fct_pit_stops`, `fct_pit_loss_by_circuit`, `fct_undercut_overcut`, `fct_race_intervals`, `fct_lap_gaps`, `fct_race_trace` |
+| **Results and standings** | Who won, who leads? | `fct_race_results`, `fct_points_progression`, `fct_championship_standings`, `fct_constructor_standings` |
+| **Context and risk** | What was happening, what might? | `fct_weather_impact`, `fct_lap_incidents`, `fct_penalties`, `fct_safety_car_events`, `fct_safety_car_hazard`, `fct_team_radio`, `fct_radio_messages` |
 
-The 16th mart, **`fct_telemetry`**, is large enough to get its own chapter (Chapter 7).
+The telemetry marts (`fct_telemetry`, its lap summary, the distance trace, the delta trace and the derived-corner models) are large enough to get their own chapter (Chapter 7).
+
+#### **Task 1b: Build the Lap-Context Layer (new in the second edition)**
+
+The first edition built each fact table straight from staging. That worked, but every model had to rediscover the same facts (which stint is this lap in? was it a safety-car lap? what was the weather?), and some of them guessed differently. The second edition computes those facts **once**, in `models/intermediate/`, and lets every mart read the result.
+
+**Step 1: Rebuild the safety-car and red-flag periods.** Race control publishes *messages*, not periods. `int_track_status_periods` turns "SAFETY CAR DEPLOYED" and "SAFETY CAR IN THIS LAP" into a start and an end: A period ends at the earliest of its own closing message, the start of a **more severe** period (VSC, then SC, then RED: on real data a VSC was upgraded to a Safety Car and no "VSC ending" message ever came), or, when neither exists, a cap (`max_unclosed_vsc_seconds` 600 and `max_unclosed_sc_seconds` 1200); `is_unclosed` marks the capped ones.
+
+```sql
+{#
+  Safety Car / Virtual Safety Car / Red Flag periods rebuilt from race control messages.
+
+  Method: each status type gets its own ordered event stream. A period starts at a "start" event and ends at the
+  next event of the same stream (or at the session end if no closing message exists).
+    SC  : starts 'SAFETY CAR DEPLOYED',          ends 'SAFETY CAR IN THIS LAP'
+    VSC : starts 'VIRTUAL SAFETY CAR DEPLOYED',  ends 'VIRTUAL SAFETY CAR ENDING'
+    RED : starts on a track-wide RED flag,       ends on the next track-wide GREEN/CLEAR flag
+  SUPERSEDING: a VSC that is upgraded to a Safety Car (or a red flag), or an SC followed by a red flag, ends when the MORE SEVERE period starts. Real
+  data (2024 Shanghai): 'VIRTUAL SAFETY CAR DEPLOYED', then 'SAFETY CAR DEPLOYED' 4 minutes later and no 'VIRTUAL SAFETY CAR ENDING' at all.
+  APPROXIMATION: an SC period ends when the "in this lap" message is issued, so the lap in which the message is
+  issued is still labelled SC (it is the last lap behind the car). Restart-lap effects are not modelled.
+#}
+WITH rc AS (
+    SELECT * FROM {{ ref('stg_race_control') }}
+),
+
+classified AS (
+    SELECT
+        session_key,
+        race_control_timestamp AS ts,
+        CASE
+            WHEN upper(message) LIKE 'VIRTUAL SAFETY CAR%' THEN 'VSC'
+            WHEN upper(message) LIKE 'SAFETY CAR%' THEN 'SC'
+            WHEN upper(flag) = 'RED' AND coalesce(upper(scope), 'TRACK') = 'TRACK' THEN 'RED'
+            WHEN upper(flag) IN ('GREEN', 'CLEAR') AND coalesce(upper(scope), 'TRACK') = 'TRACK' THEN 'RED'
+        END AS track_status,
+        CASE
+            WHEN upper(message) LIKE '%DEPLOYED%' THEN TRUE
+            WHEN upper(flag) = 'RED' THEN TRUE
+            ELSE FALSE
+        END AS is_start
+    FROM rc
+    WHERE race_control_timestamp IS NOT NULL
+),
+
+streams AS (
+    SELECT
+        *,
+        LEAD(ts) OVER (PARTITION BY session_key, track_status ORDER BY ts) AS next_ts
+    FROM classified
+    WHERE track_status IS NOT NULL
+),
+
+starts AS (
+    SELECT session_key, track_status, ts, next_ts,
+           CASE track_status WHEN 'RED' THEN 1 WHEN 'SC' THEN 2 WHEN 'VSC' THEN 3 END AS severity_rank
+    FROM streams WHERE is_start
+),
+
+superseded AS (
+    SELECT a.session_key, a.track_status, a.ts, MIN(b.ts) AS superseded_ts
+    FROM starts a
+    JOIN starts b ON a.session_key = b.session_key AND b.ts > a.ts AND b.severity_rank < a.severity_rank
+    GROUP BY a.session_key, a.track_status, a.ts
+),
+
+session_bounds AS (
+    SELECT session_key, date_end AS session_end FROM {{ ref('stg_sessions') }}
+)
+
+SELECT
+    s.session_key,
+    s.track_status,
+    s.severity_rank,
+    s.ts AS period_start,
+    {# End = the earliest of: its own closing message, the start of a more severe period, or (when neither exists) a cap instead of the session end
+       (real data produced a 35-lap VSC). RED flags may be long. #}
+    CASE
+        WHEN u.superseded_ts IS NOT NULL
+         AND u.superseded_ts < (CASE WHEN s.next_ts IS NOT NULL THEN s.next_ts
+                                     WHEN s.track_status = 'VSC' THEN {{ f1_ts_add_seconds('s.ts', var('max_unclosed_vsc_seconds', 600)) }}
+                                     WHEN s.track_status = 'SC'  THEN {{ f1_ts_add_seconds('s.ts', var('max_unclosed_sc_seconds', 1200)) }}
+                                     ELSE COALESCE(b.session_end, s.ts) END)
+        THEN u.superseded_ts
+        WHEN s.next_ts IS NOT NULL THEN s.next_ts
+        WHEN s.track_status = 'VSC' THEN {{ f1_ts_add_seconds('s.ts', var('max_unclosed_vsc_seconds', 600)) }}
+        WHEN s.track_status = 'SC'  THEN {{ f1_ts_add_seconds('s.ts', var('max_unclosed_sc_seconds', 1200)) }}
+        ELSE COALESCE(b.session_end, s.ts)
+    END AS period_end,
+    (s.next_ts IS NULL AND u.superseded_ts IS NULL) AS is_unclosed
+FROM starts s
+LEFT JOIN superseded u ON s.session_key = u.session_key AND s.track_status = u.track_status AND s.ts = u.ts
+LEFT JOIN session_bounds b ON s.session_key = b.session_key
+```
+
+**Step 2: Build the spine.** `int_lap_context` is the longest model in the project, so read it in the order of its CTEs (the named blocks of the `WITH`):
+
+```sql
+{#
+  One row per driver per lap, enriched with everything a race engineer needs on one line:
+  stint/tyre, pit flags, track status, weather at lap start, position and gaps at lap start/end,
+  and pace-normalisation flags (representative lap, fuel-corrected time, deltas).
+  Every time-based alignment uses an ASOF join (via the portable f1_asof_join macro): "the latest reading at or before this moment".
+#}
+WITH laps AS (
+    SELECT
+        CAST(session_key AS INTEGER) AS session_key,
+        CAST(meeting_key AS INTEGER) AS meeting_key,
+        CAST(driver_number AS INTEGER) AS driver_number,
+        CAST(lap_number AS INTEGER) AS lap_number,
+        date_start,
+        lap_duration,
+        duration_sector_1,
+        duration_sector_2,
+        duration_sector_3,
+        speed_trap_i1,
+        speed_trap_i2,
+        speed_trap_finish,
+        segments_sector_1,
+        segments_sector_2,
+        segments_sector_3,
+        is_pit_out_lap
+    FROM {{ ref('stg_laps') }}
+),
+
+calculated_laps AS (
+    SELECT
+        *,
+        COALESCE(
+            LEAD(date_start) OVER (PARTITION BY session_key, driver_number ORDER BY lap_number),
+            {{ f1_ts_add_seconds('date_start', 'lap_duration') }}
+        ) AS lap_end_ts,
+        MAX(lap_number) OVER (PARTITION BY session_key) AS session_lap_count
+    FROM laps
+),
+
+sessions AS (
+    SELECT 
+        CAST(session_key AS INTEGER) AS session_key, 
+        session_type, 
+        session_name, 
+        year 
+    FROM {{ ref('stg_sessions') }}
+),
+
+stints AS (
+    SELECT
+        CAST(session_key AS INTEGER) AS session_key,
+        CAST(driver_number AS INTEGER) AS driver_number,
+        CAST(stint_number AS INTEGER) AS stint_number,
+        tyre_compound,
+        CAST(tyre_age_at_start AS INTEGER) AS tyre_age_at_start,
+        CAST(lap_start AS INTEGER) AS lap_start,
+        CAST(lap_end AS INTEGER) AS lap_end
+    FROM {{ ref('stg_stints') }}
+),
+
+pit_laps AS (
+    SELECT
+        CAST(session_key AS INTEGER) AS session_key,
+        CAST(driver_number AS INTEGER) AS driver_number,
+        CAST(lap_number AS INTEGER) AS lap_number,
+        MIN(pit_timestamp) AS pit_timestamp,
+        MAX(pit_duration) AS pit_lane_time_seconds
+    FROM {{ ref('stg_pit') }}
+    GROUP BY 1, 2, 3
+),
+
+with_stint_and_pit AS (
+    SELECT
+        l.*,
+        s.session_type,
+        s.session_name,
+        s.year,
+        st.stint_number,
+        st.tyre_compound,
+        st.tyre_age_at_start + (l.lap_number - st.lap_start) AS tyre_age_this_lap,
+        (p.lap_number IS NOT NULL) AS is_in_lap,
+        p.pit_lane_time_seconds,
+        p.pit_timestamp
+    FROM calculated_laps l
+    LEFT JOIN sessions s ON l.session_key = s.session_key
+    LEFT JOIN stints st
+        ON l.session_key = st.session_key
+        AND l.driver_number = st.driver_number
+        AND l.lap_number BETWEEN st.lap_start AND st.lap_end
+    LEFT JOIN pit_laps p
+        ON l.session_key = p.session_key
+        AND l.driver_number = p.driver_number
+        AND l.lap_number = p.lap_number
+    -- Deduplicate laps that fall exactly on the overlap boundary of two stints
+    QUALIFY ROW_NUMBER() OVER (
+        PARTITION BY l.session_key, l.driver_number, l.lap_number 
+        ORDER BY st.stint_number DESC
+    ) = 1
+),
+
+with_out_lap AS (
+    SELECT
+        *,
+        (is_pit_out_lap OR COALESCE(LAG(is_in_lap) OVER (PARTITION BY session_key, driver_number ORDER BY lap_number), FALSE)) AS is_out_lap
+    FROM with_stint_and_pit
+),
+
+track_status_periods AS (
+    SELECT
+        CAST(session_key AS INTEGER) AS session_key,
+        period_start,
+        period_end,
+        severity_rank
+    FROM {{ ref('int_track_status_periods') }}
+),
+
+lap_track_status AS (
+    SELECT
+        l.session_key, l.driver_number, l.lap_number,
+        MIN(p.severity_rank) AS worst_rank
+    FROM with_out_lap l
+    JOIN track_status_periods p
+        ON l.session_key = p.session_key
+        AND p.period_start <= l.lap_end_ts
+        AND p.period_end >= l.date_start
+    GROUP BY 1, 2, 3
+),
+
+race_control AS (
+    SELECT
+        CAST(session_key AS INTEGER) AS session_key,
+        race_control_timestamp,
+        flag
+    FROM {{ ref('stg_race_control') }}
+),
+
+lap_yellow AS (
+    SELECT DISTINCT l.session_key, l.driver_number, l.lap_number
+    FROM with_out_lap l
+    JOIN race_control rc
+        ON l.session_key = rc.session_key
+        AND rc.race_control_timestamp >= l.date_start
+        AND rc.race_control_timestamp < l.lap_end_ts
+    WHERE upper(rc.flag) IN ('YELLOW', 'DOUBLE YELLOW')
+),
+
+spine AS (
+    SELECT 
+        CAST(session_key AS INTEGER) AS session_key, 
+        CAST(driver_number AS INTEGER) AS driver_number, 
+        CAST(lap_number AS INTEGER) AS lap_number, 
+        date_start AS lap_start_ts, 
+        lap_end_ts 
+    FROM with_out_lap
+),
+
+stg_weather_clean AS (
+    SELECT 
+        CAST(session_key AS INTEGER) AS session_key,
+        weather_timestamp,
+        air_temperature,
+        track_temperature,
+        humidity,
+        wind_speed,
+        rainfall_flag
+    FROM {{ ref('stg_weather') }}
+),
+
+stg_position_clean AS (
+    SELECT 
+        CAST(session_key AS INTEGER) AS session_key,
+        CAST(driver_number AS INTEGER) AS driver_number,
+        position_timestamp,
+        position
+    FROM {{ ref('stg_position') }}
+),
+
+stg_intervals_clean AS (
+    SELECT 
+        CAST(session_key AS INTEGER) AS session_key,
+        CAST(driver_number AS INTEGER) AS driver_number,
+        interval_timestamp,
+        gap_to_leader_raw,
+        interval_raw
+    FROM {{ ref('stg_intervals') }}
+),
+
+weather_at_start AS (
+    {{ f1_asof_join(left='spine', right='stg_weather_clean', on=['session_key'], left_ts='lap_start_ts', right_ts='weather_timestamp',
+        left_cols=['session_key', 'driver_number', 'lap_number', 'lap_start_ts'],
+        right_cols=['weather_timestamp', 'air_temperature', 'track_temperature', 'humidity', 'wind_speed', 'rainfall_flag']) }}
+),
+
+position_at_start AS (
+    {{ f1_asof_join(left='spine', right='stg_position_clean', on=['session_key', 'driver_number'], left_ts='lap_start_ts', right_ts='position_timestamp',
+        left_cols=['session_key', 'driver_number', 'lap_number', 'lap_start_ts'], right_cols=['position AS position_start']) }}
+),
+
+position_at_end AS (
+    {{ f1_asof_join(left='spine', right='stg_position_clean', on=['session_key', 'driver_number'], left_ts='lap_end_ts', right_ts='position_timestamp',
+        left_cols=['session_key', 'driver_number', 'lap_number', 'lap_end_ts'], right_cols=['position AS position_end']) }}
+),
+
+gaps_at_end AS (
+    {{ f1_asof_join(left='spine', right='stg_intervals_clean', on=['session_key', 'driver_number'], left_ts='lap_end_ts', right_ts='interval_timestamp',
+        left_cols=['session_key', 'driver_number', 'lap_number', 'lap_end_ts'], right_cols=['gap_to_leader_raw', 'interval_raw']) }}
+),
+
+enriched AS (
+    SELECT
+        l.*,
+        CASE ts.worst_rank WHEN 1 THEN 'RED' WHEN 2 THEN 'SC' WHEN 3 THEN 'VSC' END AS neutralisation_status,
+        (y.lap_number IS NOT NULL) AS has_yellow_flag,
+        w.weather_timestamp,
+        w.air_temperature,
+        w.track_temperature,
+        w.humidity,
+        w.wind_speed,
+        w.rainfall_flag,
+        ps.position_start,
+        pe.position_end,
+        {{ f1_try_cast_fn() }}(g.gap_to_leader_raw AS {{ f1_type('double') }}) AS gap_to_leader_end_seconds,
+        {{ f1_try_cast_fn() }}(g.interval_raw AS {{ f1_type('double') }}) AS gap_to_car_ahead_end_seconds,
+        COALESCE(g.gap_to_leader_raw LIKE '+%LAP%', FALSE) AS is_lapped_at_lap_end
+    FROM with_out_lap l
+    LEFT JOIN lap_track_status ts
+        ON l.session_key = ts.session_key AND l.driver_number = ts.driver_number AND l.lap_number = ts.lap_number
+    LEFT JOIN lap_yellow y
+        ON l.session_key = y.session_key AND l.driver_number = y.driver_number AND l.lap_number = y.lap_number
+    LEFT JOIN weather_at_start w
+        ON l.session_key = w.session_key AND l.driver_number = w.driver_number AND l.lap_number = w.lap_number
+    LEFT JOIN position_at_start ps
+        ON l.session_key = ps.session_key AND l.driver_number = ps.driver_number AND l.lap_number = ps.lap_number
+    LEFT JOIN position_at_end pe
+        ON l.session_key = pe.session_key AND l.driver_number = pe.driver_number AND l.lap_number = pe.lap_number
+    LEFT JOIN gaps_at_end g
+        ON l.session_key = g.session_key AND l.driver_number = g.driver_number AND l.lap_number = g.lap_number
+),
+
+flagged AS (
+    SELECT
+        *,
+        COALESCE(neutralisation_status, CASE WHEN has_yellow_flag THEN 'YELLOW' END, 'GREEN') AS track_status,
+        (lap_number = 1) AS is_first_lap,
+        (lap_duration IS NOT NULL AND lap_duration > 0
+            AND NOT is_in_lap AND NOT is_out_lap AND lap_number > 1
+            AND neutralisation_status IS NULL AND NOT has_yellow_flag) AS is_clean_candidate
+    FROM enriched
+),
+
+with_medians AS (
+    SELECT
+        *,
+        {{ f1_median_over('CASE WHEN is_clean_candidate THEN lap_duration END', 'session_key, driver_number') }} AS driver_median_clean_lap_seconds
+    FROM flagged
+)
+
+SELECT
+    session_key, meeting_key, driver_number, lap_number,
+    session_type, session_name, year,
+    date_start AS lap_start_ts,
+    lap_end_ts,
+    lap_duration AS lap_time_seconds,
+    duration_sector_1, duration_sector_2, duration_sector_3,
+    speed_trap_i1, speed_trap_i2, speed_trap_finish,
+    stint_number, tyre_compound, tyre_age_this_lap,
+    is_first_lap, is_in_lap, is_out_lap, pit_lane_time_seconds,
+    track_status, neutralisation_status, has_yellow_flag,
+    (track_status = 'GREEN') AS is_green_flag_lap,
+    weather_timestamp, air_temperature, track_temperature, humidity, wind_speed,
+    (COALESCE(rainfall_flag, 0) > 0) AS is_raining_at_lap_start,
+    position_start, position_end,
+    gap_to_leader_end_seconds, gap_to_car_ahead_end_seconds, is_lapped_at_lap_end,
+    driver_median_clean_lap_seconds,
+    (is_clean_candidate AND lap_duration <= driver_median_clean_lap_seconds * {{ var('representative_lap_threshold') }}) AS is_representative_lap,
+    CASE
+        WHEN session_type IN ('Race', 'Sprint') AND lap_duration IS NOT NULL
+        THEN lap_duration - {{ var('fuel_effect_seconds_per_lap') }} * (session_lap_count - lap_number)
+    END AS fuel_corrected_lap_time_seconds,
+    lap_duration - driver_median_clean_lap_seconds AS delta_to_driver_median_seconds,
+    {# Cumulative race time = elapsed time at the END of the lap, measured from the first car to finish lap 1. It is built from lap END timestamps
+       (the next lap's start, or start + duration for a final lap), NOT from a running SUM of durations: OpenF1 often has no lap-1 duration/start, and
+       SUM silently skipped such laps, putting that driver ~100 s 'ahead' for the whole race; it also froze a retiring car's clock. A lap with no
+       end timestamp (a retiring car's unfinished last lap) has no cumulative time. #}
+    ({{ f1_epoch_ms('lap_end_ts') }}
+       - COALESCE(MIN(CASE WHEN lap_number = 1 THEN {{ f1_epoch_ms('lap_end_ts') }} END) OVER (PARTITION BY session_key),
+                  MIN({{ f1_epoch_ms('lap_end_ts') }}) OVER (PARTITION BY session_key))) / 1000.0 AS cumulative_race_time_seconds
+FROM with_medians
+```
+
+**How it works, CTE by CTE**
+
+1. **`laps`, `calculated_laps`:** cast the keys and add `lap_end_ts` (the next lap's start, or start plus duration for the last lap) so each lap has a time window.
+2. **`sessions`, `stints`, `pit_laps`, `with_stint_and_pit`:** match each lap to the stint it belongs to, **keeping exactly one** (`QUALIFY ROW_NUMBER() ... ORDER BY stint_number DESC = 1`: a lap shared by two stints goes to the later one). This is where the overlapping-stint bug was fixed; see the first pitfall at the end of the chapter.
+3. **`with_out_lap`:** `is_in_lap` (a stop was logged on this lap) and `is_out_lap` (the lap after, or flagged by the API).
+4. **`track_status_periods`, `lap_track_status`, `race_control`, `lap_yellow`:** the worst safety-car/VSC/red period that overlaps the lap, and whether a sector yellow was shown inside it.
+5. **`spine`, the `stg_*_clean` CTEs, `weather_at_start`, `position_at_start`, `position_at_end`, `gaps_at_end`, `enriched`:** four **ASOF** lookups, each on a *narrow spine* of just the key columns and the one timestamp, then joined back. Narrow spines keep the joins cheap and, as Chapter 10 shows, make the same SQL work on BigQuery.
+6. **`flagged`, `with_medians`:** `is_clean_candidate` (a timed lap that is not first/in/out/yellow/SC/VSC/red), each driver's **median clean lap**, and `is_representative_lap` (a clean lap within `representative_lap_threshold` of that median).
+7. **The final `SELECT`:** adds `fuel_corrected_lap_time_seconds` (lap time minus `fuel_effect_seconds_per_lap` times the laps of fuel still on board; Race and Sprint only), `delta_to_driver_median_seconds` and `cumulative_race_time_seconds`. The cumulative time is built from lap **end** timestamps, relative to the first car to finish lap 1, because a running sum of durations skipped any lap with no duration and left that driver about 100 s "ahead" for the whole race; it is `NULL` for a retiring car's unfinished last lap.
+
+> **Two assumptions to know about.** The fuel effect (0.035 seconds per lap) is a commonly quoted order of magnitude, not a measured value: calibrate it per circuit before drawing conclusions. And a Safety Car period ends when "SAFETY CAR IN THIS LAP" is issued, so the lap containing that message is still labelled SC; restart-lap effects are not modelled.
 
 #### **Task 2: Create the Models**
 
-Create the files in **models/marts/core/** (dimensions) and **models/marts/analytics/** (facts). The default from `dbt_project.yml` makes them **tables**; a few add explicit `config` blocks.
+Create the files in **models/marts/core/** (dimensions) and **models/marts/analytics/** (facts). The default from `dbt_project.yml` makes them **tables**. Models marked *new* were added in the second edition; the others exist in the first edition, several with changed SQL.
 
 **`models/marts/core/dim_drivers.sql`**
 
-**Dimension.** One row per driver (their most recent session wins), so the driver list never has duplicates.
+**Dimension.** One row per driver (their most recent session wins), so the driver list never has duplicates. The key is cast to `BIGINT` explicitly (see the DuckDB 1.5 pitfall in Chapter 5).
 
 ```sql
 WITH staging_drivers AS (
@@ -2169,7 +3227,7 @@ WITH staging_drivers AS (
 
 deduplicated_drivers AS (
     SELECT
-        driver_number,
+        CAST(driver_number AS BIGINT) AS driver_number,
         full_name,
         driver_acronym,
         team_name,
@@ -2177,7 +3235,7 @@ deduplicated_drivers AS (
         country_code,
         headshot_url,
         -- This ranks a driver's rows, putting their most recent session as #1
-        ROW_NUMBER() OVER (PARTITION BY driver_number ORDER BY session_key DESC) as row_num
+        ROW_NUMBER() OVER (PARTITION BY CAST(driver_number AS BIGINT) ORDER BY session_key DESC) as row_num
     FROM staging_drivers
 )
 
@@ -2190,6 +3248,31 @@ SELECT
     country_code,
     headshot_url
 FROM deduplicated_drivers
+WHERE row_num = 1
+```
+
+**`models/marts/core/dim_driver_session.sql`**
+
+**Dimension (new).** The driver-to-team assignment **per session**. `dim_drivers` keeps only the latest team, which is wrong for a driver who changed team mid-season; join facts to this table on `(session_key, driver_number)` instead.
+
+```sql
+{# Driver-to-team assignment PER SESSION. dim_drivers only keeps the latest team, which is wrong for historical
+   joins after a mid-season move; join facts to this table on (session_key, driver_number) instead. #}
+WITH ranked AS (
+    SELECT
+        CAST(session_key AS BIGINT) AS session_key, 
+        meeting_key, 
+        CAST(driver_number AS BIGINT) AS driver_number, 
+        full_name, 
+        driver_acronym,
+        team_name, 
+        team_color_hex, 
+        country_code,
+        ROW_NUMBER() OVER (PARTITION BY CAST(session_key AS BIGINT), CAST(driver_number AS BIGINT) ORDER BY team_name) AS row_num
+    FROM {{ ref('stg_drivers') }}
+)
+SELECT session_key, meeting_key, driver_number, full_name, driver_acronym, team_name, team_color_hex, country_code
+FROM ranked
 WHERE row_num = 1
 ```
 
@@ -2234,112 +3317,249 @@ enriched_sessions AS (
 SELECT * FROM enriched_sessions
 ```
 
-**`models/marts/analytics/fct_lap_performance.sql`**
+**`models/marts/core/dim_circuits.sql`**
 
-Each lap joined to the tyre **stint** it belongs to, with a calculated tyre age for that lap. Uses a **range join** (`BETWEEN`).
+**Dimension (new).** One row per circuit. The API provides no corner or sector geometry; Chapter 7 *derives* corners from telemetry.
 
 ```sql
-WITH laps AS (
-    SELECT * FROM {{ ref('stg_laps') }}
-),
-
-stints AS (
-    SELECT * FROM {{ ref('stg_stints') }}
-)
-
+{# One row per circuit. NOTE: the OpenF1 API exposes no corner / sector geometry, so corner-level analysis
+   needs an external reference table (see README, "Known limitations"). #}
 SELECT
-    l.session_key,
-    l.meeting_key,
-    l.driver_number,
-    l.lap_number,
-    l.lap_duration AS lap_time_seconds,
-    
-    -- Bringing in the Tyre Strategy Data
-    s.stint_number,
-    s.tyre_compound, -- Updated to match the column name coming out of stg_stints
-    
-    -- Calculate exactly how many laps this set of tyres has done!
-    s.tyre_age_at_start + (l.lap_number - s.lap_start) AS tyre_age_this_lap
+    circuit_key,
+    MAX(circuit_short_name) AS circuit_short_name,
+    MAX(location) AS location,
+    MAX(country_code) AS country_code,
+    MIN(year) AS first_year,
+    MAX(year) AS last_year,
+    COUNT(*) AS sessions_held,
+    COUNT(CASE WHEN session_type = 'Race' THEN 1 END) AS races_held
+FROM {{ ref('dim_sessions') }}
+WHERE circuit_key IS NOT NULL
+GROUP BY circuit_key
+```
 
-FROM laps l
--- Range Join
-LEFT JOIN stints s
-    ON l.session_key = s.session_key
-    AND l.driver_number = s.driver_number
-    AND l.lap_number BETWEEN s.lap_start AND s.lap_end
+**`models/marts/analytics/fct_lap_performance.sql`**
+
+Lap-level pace, now read from the spine. Filter `is_representative_lap` for pace comparisons; use `fuel_corrected_lap_time_seconds` to compare laps at different fuel loads.
+
+```sql
+{# Lap-level pace table. Use is_representative_lap = TRUE for pace comparisons (excludes first/in/out laps,
+   yellow/SC/VSC/red laps and slow outliers). fuel_corrected_* is an ASSUMPTION-driven normalisation
+   (see var fuel_effect_seconds_per_lap). #}
+SELECT
+    session_key, meeting_key, driver_number, lap_number,
+    session_type, lap_start_ts,
+    lap_time_seconds,
+    duration_sector_1, duration_sector_2, duration_sector_3,
+    speed_trap_i1, speed_trap_i2, speed_trap_finish,
+    stint_number, tyre_compound, tyre_age_this_lap,
+    is_first_lap, is_in_lap, is_out_lap,
+    track_status, is_green_flag_lap, is_representative_lap,
+    fuel_corrected_lap_time_seconds,
+    delta_to_driver_median_seconds,
+    lap_time_seconds - MIN(CASE WHEN is_representative_lap THEN lap_time_seconds END) OVER (PARTITION BY session_key)
+        AS delta_to_session_best_representative_seconds,
+    position_start, position_end,
+    gap_to_leader_end_seconds, gap_to_car_ahead_end_seconds
+FROM {{ ref('int_lap_context') }}
 ```
 
 **`models/marts/analytics/fct_fastest_laps.sql`**
 
-The single best lap per driver per session, found with `ROW_NUMBER()` over a window.
+One row per driver per session: best lap, personal-best sectors, **theoretical best lap** (the sum of the best three sectors), and ranking.
 
 ```sql
-WITH laps AS (
-    SELECT * FROM {{ ref('stg_laps') }}
+{# One row per driver per session: best lap, personal-best sectors, theoretical best lap and session ranking. #}
+WITH valid AS (
+    SELECT * FROM {{ ref('int_lap_context') }}
+    WHERE lap_time_seconds IS NOT NULL AND lap_time_seconds > 0
 ),
-
-ranked_laps AS (
+best_lap AS (
+    SELECT *, ROW_NUMBER() OVER (PARTITION BY session_key, driver_number ORDER BY lap_time_seconds ASC, lap_number) AS lap_rank
+    FROM valid
+),
+best_sectors AS (
     SELECT
-        session_key,
-        meeting_key,
-        driver_number,
-        lap_number,
-        lap_duration AS fastest_lap_time_seconds,
-        -- Row number orders laps from quickest to slowest per driver, per session
-        ROW_NUMBER() OVER (
-            PARTITION BY session_key, driver_number 
-            ORDER BY lap_duration ASC
-        ) AS lap_rank
-    FROM laps
-    WHERE lap_duration IS NOT NULL
+        session_key, driver_number,
+        MIN(duration_sector_1) AS best_sector_1_seconds,
+        MIN(duration_sector_2) AS best_sector_2_seconds,
+        MIN(duration_sector_3) AS best_sector_3_seconds
+    FROM valid
+    GROUP BY 1, 2
+),
+joined AS (
+    SELECT
+        b.session_key, b.meeting_key, b.driver_number, b.lap_number,
+        b.lap_time_seconds AS fastest_lap_time_seconds,
+        b.tyre_compound, b.tyre_age_this_lap, b.speed_trap_finish,
+        s.best_sector_1_seconds, s.best_sector_2_seconds, s.best_sector_3_seconds,
+        s.best_sector_1_seconds + s.best_sector_2_seconds + s.best_sector_3_seconds AS theoretical_best_lap_seconds
+    FROM best_lap b
+    JOIN best_sectors s ON b.session_key = s.session_key AND b.driver_number = s.driver_number
+    WHERE b.lap_rank = 1
 )
-
--- Grab only the #1 fastest lap for every driver in each session
 SELECT
-    session_key,
-    meeting_key,
-    driver_number,
-    lap_number,
-    fastest_lap_time_seconds
-FROM ranked_laps
-WHERE lap_rank = 1
+    *,
+    fastest_lap_time_seconds - theoretical_best_lap_seconds AS time_left_on_table_seconds,
+    RANK() OVER (PARTITION BY session_key ORDER BY fastest_lap_time_seconds) AS session_rank,
+    fastest_lap_time_seconds - MIN(fastest_lap_time_seconds) OVER (PARTITION BY session_key) AS gap_to_session_fastest_seconds,
+    (fastest_lap_time_seconds = MIN(fastest_lap_time_seconds) OVER (PARTITION BY session_key)) AS is_overall_fastest_lap
+FROM joined
+```
+
+**`models/marts/analytics/fct_stints.sql`**
+
+**New.** One row per driver stint with pace and **tyre degradation**: the slope of fuel-corrected lap time against tyre age over representative laps (positive means the tyre is losing time).
+
+```sql
+{# One row per driver stint with pace and DEGRADATION. degradation = slope of (fuel-corrected) lap time against
+   tyre age over representative laps; positive = the tyre is losing time. Needs
+   var min_stint_laps_for_degradation representative laps, otherwise NULL (too little evidence). #}
+SELECT
+    session_key, meeting_key, driver_number, stint_number, tyre_compound,
+    MIN(lap_number) AS first_lap,
+    MAX(lap_number) AS last_lap,
+    COUNT(*) AS stint_length_laps,
+    MIN(tyre_age_this_lap) AS tyre_age_at_start,
+    MAX(tyre_age_this_lap) AS tyre_age_at_end,
+    COUNT(CASE WHEN is_representative_lap THEN 1 END) AS representative_laps,
+    AVG(CASE WHEN is_representative_lap THEN lap_time_seconds END) AS avg_representative_lap_seconds,
+    MIN(CASE WHEN is_representative_lap THEN lap_time_seconds END) AS best_representative_lap_seconds,
+    CASE
+        WHEN COUNT(CASE WHEN is_representative_lap THEN 1 END) >= {{ var('min_stint_laps_for_degradation') }}
+        THEN {{ f1_regr_slope(
+                'CASE WHEN is_representative_lap THEN COALESCE(fuel_corrected_lap_time_seconds, lap_time_seconds) END',
+                "CASE WHEN is_representative_lap THEN " ~ f1_cast('tyre_age_this_lap', 'double') ~ " END") }}
+    END AS degradation_seconds_per_lap
+FROM {{ ref('int_lap_context') }}
+WHERE stint_number IS NOT NULL
+GROUP BY session_key, meeting_key, driver_number, stint_number, tyre_compound
+```
+
+**`models/marts/analytics/fct_tire_strategy.sql`**
+
+One row per driver per session: the whole tyre strategy on one line (`MEDIUM>HARD`), now built from `fct_stints`.
+
+```sql
+{# One row per driver per session: the whole tyre strategy on one line, e.g. MEDIUM>HARD. #}
+SELECT
+    session_key, meeting_key, driver_number,
+    STRING_AGG(tyre_compound, '>' ORDER BY stint_number) AS strategy,
+    COUNT(*) AS stint_count,
+    COUNT(*) - 1 AS pit_stop_count,
+    SUM(stint_length_laps) AS total_laps,
+    {{ f1_list_agg('stint_length_laps', 'stint_number') }} AS stint_lengths,
+    COUNT(DISTINCT CASE WHEN tyre_compound IN ('SOFT', 'MEDIUM', 'HARD') THEN tyre_compound END) >= 2 AS used_two_dry_compounds
+FROM {{ ref('fct_stints') }}
+GROUP BY session_key, meeting_key, driver_number
 ```
 
 **`models/marts/analytics/fct_pit_stops.sql`**
 
-Pit lane time per stop, cast to a number, with incomplete records removed.
+One row per pit stop: tyre before and after, **time lost**, positions gained, whether it happened under neutralisation, and a slow-stop flag. Only **Race and Sprint** stops are kept: in practice and qualifying OpenF1 reports every garage visit as a pit stop, which would swamp the circuit pit-loss medians.
 
 ```sql
-WITH pit_stops AS (
-    SELECT * FROM {{ ref('stg_pit') }}
+{# One row per pit stop. pit_lane_time_seconds is what OpenF1 reports (pit entry to exit), NOT stationary time.
+   time_lost_seconds = (in-lap + out-lap) - 2 x the driver's median clean lap: it is only meaningful under green
+   flags, and is_under_neutralisation flags stops made under SC/VSC/red where the real cost is much lower.
+   position change across the stop includes any on-track passes made on the out-lap.
+   ONLY Race and Sprint sessions are kept: in practice and qualifying OpenF1 reports every garage visit as a pit stop
+   (real data: median pit-lane time 340 s in practice vs 23.5 s in races), which would swamp circuit pit-loss medians. #}
+WITH pits AS (
+    SELECT p.*
+    FROM {{ ref('stg_pit') }} p
+    JOIN {{ ref('stg_sessions') }} s ON p.session_key = s.session_key
+    WHERE p.pit_duration IS NOT NULL AND s.session_type IN ('Race', 'Sprint')
+),
+ctx AS (
+    SELECT * FROM {{ ref('int_lap_context') }}
+),
+stops AS (
+    SELECT
+        p.session_key, p.meeting_key, p.driver_number, p.lap_number, p.pit_timestamp,
+        p.pit_duration AS pit_lane_time_seconds,
+        ROW_NUMBER() OVER (PARTITION BY p.session_key, p.driver_number ORDER BY p.lap_number, p.pit_timestamp) AS stop_number,
+        i.tyre_compound AS compound_before, i.tyre_age_this_lap AS tyre_age_before,
+        o.tyre_compound AS compound_after,
+        i.position_start AS position_before_stop,
+        o.position_end AS position_after_stop,
+        i.track_status AS in_lap_track_status,
+        i.lap_time_seconds AS in_lap_time_seconds,
+        o.lap_time_seconds AS out_lap_time_seconds,
+        i.driver_median_clean_lap_seconds AS reference_lap_seconds
+    FROM pits p
+    LEFT JOIN ctx i ON p.session_key = i.session_key AND p.driver_number = i.driver_number AND p.lap_number = i.lap_number
+    LEFT JOIN ctx o ON p.session_key = o.session_key AND p.driver_number = o.driver_number AND p.lap_number + 1 = o.lap_number
 )
-
 SELECT
-    session_key,
-    meeting_key,
-    driver_number,
-    lap_number,
-    CAST(pit_duration AS DOUBLE) AS pit_lane_time_seconds
-FROM pit_stops
-WHERE pit_duration IS NOT NULL
+    *,
+    in_lap_time_seconds + out_lap_time_seconds - 2 * reference_lap_seconds AS time_lost_seconds,
+    position_before_stop - position_after_stop AS net_positions_gained,
+    COALESCE(in_lap_track_status IN ('SC', 'VSC', 'RED'), FALSE) AS is_under_neutralisation,
+    {{ f1_median_over('pit_lane_time_seconds', 'session_key') }} AS session_median_pit_lane_time_seconds,
+    pit_lane_time_seconds > {{ f1_median_over('pit_lane_time_seconds', 'session_key') }} + {{ var('slow_stop_margin_seconds') }} AS is_slow_stop,
+    RANK() OVER (PARTITION BY session_key ORDER BY pit_lane_time_seconds) AS pit_lane_rank
+FROM stops
 ```
 
 **`models/marts/analytics/fct_overtakes.sql`**
 
-Who passed whom, and the position after the pass.
+Overtake events with lap, tyre, DRS and **pit-cycle** context (a position change within 90 seconds of a pit stop is probably strategy, not a pass).
 
 ```sql
-WITH overtakes AS (
-    SELECT * FROM {{ ref('stg_overtakes') }}
+{# Overtake events with context. is_probable_pit_cycle_pass = either driver pitted within 90 s of the pass,
+   i.e. the position change is likely strategy, not an on-track pass. gap/tyre context is "latest known before the
+   pass" (interval samples can be up to ~30 s old). Each ASOF lookup runs on a narrow spine keyed by ot_id and is
+   joined back, which keeps the logic identical (and cheap) on DuckDB and BigQuery. #}
+WITH o AS (
+    SELECT
+        ROW_NUMBER() OVER (ORDER BY session_key, overtake_timestamp, overtaking_driver_number, overtaken_driver_number) AS ot_id,
+        session_key, meeting_key, overtake_timestamp, overtaking_driver_number, overtaken_driver_number, position
+    FROM {{ ref('stg_overtakes') }}
+),
+overtaker AS (
+    SELECT ot_id, session_key, overtaking_driver_number AS driver_number, overtake_timestamp FROM o
+),
+overtaken AS (
+    SELECT ot_id, session_key, overtaken_driver_number AS driver_number, overtake_timestamp FROM o
+),
+overtaker_ctx AS (
+    {{ f1_asof_join(left='overtaker', right=ref('int_lap_context'), on=['session_key', 'driver_number'], left_ts='overtake_timestamp', right_ts='lap_start_ts',
+        left_cols=['ot_id', 'session_key', 'driver_number', 'overtake_timestamp'],
+        right_cols=['lap_number', 'track_status', 'tyre_compound', 'tyre_age_this_lap']) }}
+),
+overtaken_ctx AS (
+    {{ f1_asof_join(left='overtaken', right=ref('int_lap_context'), on=['session_key', 'driver_number'], left_ts='overtake_timestamp', right_ts='lap_start_ts',
+        left_cols=['ot_id', 'session_key', 'driver_number', 'overtake_timestamp'],
+        right_cols=['tyre_compound', 'tyre_age_this_lap']) }}
+),
+gap_ctx AS (
+    {{ f1_asof_join(left='overtaker', right=ref('stg_intervals'), on=['session_key', 'driver_number'], left_ts='overtake_timestamp', right_ts='interval_timestamp',
+        left_cols=['ot_id', 'session_key', 'driver_number', 'overtake_timestamp'], right_cols=['interval_raw']) }}
 )
-
 SELECT
-    session_key,
-    meeting_key,
-    overtaking_driver_number,
-    overtaken_driver_number,
-    position AS post_overtake_position
-FROM overtakes
+    o.session_key, o.meeting_key, o.overtake_timestamp,
+    o.overtaking_driver_number, o.overtaken_driver_number,
+    o.position AS post_overtake_position,
+    a.lap_number,
+    a.track_status,
+    a.tyre_compound AS overtaker_tyre_compound,
+    a.tyre_age_this_lap AS overtaker_tyre_age,
+    d.tyre_compound AS overtaken_tyre_compound,
+    d.tyre_age_this_lap AS overtaken_tyre_age,
+    a.tyre_age_this_lap - d.tyre_age_this_lap AS tyre_age_delta,
+    {{ f1_try_cast_fn() }}(g.interval_raw AS {{ f1_type('double') }}) AS overtaker_gap_ahead_before_pass_seconds,
+    COALESCE({{ f1_try_cast_fn() }}(g.interval_raw AS {{ f1_type('double') }}) <= {{ var('drs_range_seconds') }}, FALSE) AS was_in_drs_range_before_pass,
+    EXISTS (
+        SELECT 1 FROM {{ ref('stg_pit') }} p
+        WHERE p.session_key = o.session_key
+          AND p.driver_number IN (o.overtaking_driver_number, o.overtaken_driver_number)
+          AND ABS({{ f1_seconds_between('o.overtake_timestamp', 'p.pit_timestamp') }}) <= 90
+    ) AS is_probable_pit_cycle_pass
+FROM o
+LEFT JOIN overtaker_ctx a ON o.ot_id = a.ot_id
+LEFT JOIN overtaken_ctx d ON o.ot_id = d.ot_id
+LEFT JOIN gap_ctx g ON o.ot_id = g.ot_id
 ```
 
 **`models/marts/analytics/fct_driver_positions.sql`**
@@ -2390,20 +3610,16 @@ FROM positions_data p
 
 **`models/marts/analytics/fct_team_radio.sql`**
 
-Radio messages enriched with the driver and team names.
+Radio messages enriched with the driver and team names. The team is taken **per session** from `dim_driver_session`, so a mid-season team change does not rewrite history.
 
 ```sql
 {{ config(
     materialized = 'table'
 ) }}
 
+{# Team is resolved PER SESSION via dim_driver_session, so a mid-season team change does not rewrite history. #}
 WITH radio_data AS (
     SELECT * FROM {{ ref('stg_team_radio') }}
-),
-
-drivers AS (
-    SELECT DISTINCT driver_number, team_name, full_name 
-    FROM {{ ref('dim_drivers') }}
 )
 
 SELECT
@@ -2412,50 +3628,33 @@ SELECT
     r.driver_number,
     d.full_name AS driver_name,
     d.team_name,
-    
-    -- UPDATE THIS LINE: Use the actual column name from your staging model
     r.radio_timestamp,
-    
     r.recording_url
-
 FROM radio_data r
-LEFT JOIN drivers d
-    ON r.driver_number = d.driver_number
+LEFT JOIN {{ ref('dim_driver_session') }} d
+    ON r.session_key = d.session_key AND r.driver_number = d.driver_number
 ```
 
 **`models/marts/analytics/fct_weather_impact.sql`**
 
-Each lap with **session-level average** air and track temperature and a rain flag.
+Each lap with the weather **at lap start** (an ASOF join), plus the session-level averages the first edition used.
 
 ```sql
-WITH session_weather AS (
-    SELECT
-        session_key,
-        AVG(air_temperature) AS avg_air_temperature,
-        AVG(track_temperature) AS avg_track_temperature,
-        MAX(rainfall_flag) AS rained_during_session
-    FROM {{ ref('stg_weather') }}
-    GROUP BY session_key
-),
-
-laps AS (
-    SELECT * FROM {{ ref('stg_laps') }}
-)
-
+{# Weather at the START of each lap (ASOF join to the latest reading at or before lap start), plus the
+   session-level averages kept for backwards compatibility. #}
 SELECT
-    l.session_key,
-    l.meeting_key,
-    l.driver_number,
-    l.lap_number,
-    -- Aliased to match your schema.yml testing expectations perfectly
-    l.lap_duration AS lap_time_seconds,
-    w.avg_air_temperature,
-    w.avg_track_temperature,
-    w.rained_during_session
-FROM laps l
-LEFT JOIN session_weather w
-    ON l.session_key = w.session_key
-WHERE l.lap_duration IS NOT NULL
+    l.session_key, l.meeting_key, l.driver_number, l.lap_number,
+    l.lap_time_seconds,
+    l.air_temperature, l.track_temperature, l.humidity, l.wind_speed,
+    l.is_raining_at_lap_start,
+    l.track_temperature - FIRST_VALUE(l.track_temperature) OVER (PARTITION BY l.session_key, l.driver_number ORDER BY l.lap_number)
+        AS track_temperature_change_since_first_lap,
+    AVG(l.air_temperature) OVER (PARTITION BY l.session_key) AS avg_air_temperature,
+    AVG(l.track_temperature) OVER (PARTITION BY l.session_key) AS avg_track_temperature,
+    {{ f1_bool_or('l.is_raining_at_lap_start') }} OVER (PARTITION BY l.session_key) AS rained_during_session,
+    l.track_status, l.is_representative_lap, l.delta_to_driver_median_seconds
+FROM {{ ref('int_lap_context') }} l
+WHERE l.lap_time_seconds IS NOT NULL
 ```
 
 **`models/marts/analytics/fct_championship_standings.sql`**
@@ -2498,202 +3697,295 @@ FROM team_standings
 
 **`models/marts/analytics/fct_lap_incidents.sql`**
 
-Laps flagged when race control reported an incident on that lap. Materialised as a table.
+Lap-level track status and race-control activity, attached by **time window** and ranked by **severity** (the first edition picked the alphabetically largest flag).
 
 ```sql
-{{ config(
-    materialized='table'
-) }}
+{# Lap-level incident view. Race control messages are attached to laps by TIME WINDOW (lap start to next lap
+   start), not by the often-empty lap_number column. primary_flag is ranked by severity, not alphabetically. #}
+WITH events AS (
+    SELECT
+        l.session_key, l.driver_number, l.lap_number,
+        rc.category, rc.flag, rc.message,
+        CASE upper(rc.flag)
+            WHEN 'RED' THEN 1 WHEN 'DOUBLE YELLOW' THEN 2 WHEN 'YELLOW' THEN 3
+            WHEN 'BLACK AND WHITE' THEN 4 WHEN 'BLACK' THEN 4 WHEN 'BLUE' THEN 5 ELSE 9
+        END AS flag_rank
+    FROM {{ ref('int_lap_context') }} l
+    JOIN {{ ref('stg_race_control') }} rc
+        ON l.session_key = rc.session_key
+        AND rc.race_control_timestamp >= l.lap_start_ts
+        AND rc.race_control_timestamp < l.lap_end_ts
+        AND (rc.driver_number IS NULL OR rc.driver_number = l.driver_number)
+),
+per_lap AS (
+    SELECT
+        session_key, driver_number, lap_number,
+        STRING_AGG(DISTINCT category, ', ' ORDER BY category) AS incident_categories,
+        COUNT(*) AS race_control_message_count,
+        MIN(flag_rank) AS worst_flag_rank,
+        {{ f1_bool_or("upper(message) LIKE '%PENALTY%'") }} AS has_penalty_message
+    FROM events
+    GROUP BY 1, 2, 3
+)
+SELECT
+    l.session_key, l.meeting_key, l.driver_number, l.lap_number,
+    l.lap_time_seconds,
+    l.track_status,
+    l.neutralisation_status,
+    (l.track_status <> 'GREEN') AS is_affected_by_incident,
+    p.incident_categories,
+    COALESCE(p.race_control_message_count, 0) AS race_control_message_count,
+    CASE p.worst_flag_rank WHEN 1 THEN 'RED' WHEN 2 THEN 'DOUBLE YELLOW' WHEN 3 THEN 'YELLOW'
+        WHEN 4 THEN 'BLACK AND WHITE' WHEN 5 THEN 'BLUE' END AS primary_flag,
+    COALESCE(p.has_penalty_message, FALSE) AS has_penalty_message
+FROM {{ ref('int_lap_context') }} l
+LEFT JOIN per_lap p
+    ON l.session_key = p.session_key AND l.driver_number = p.driver_number AND l.lap_number = p.lap_number
+```
 
-WITH laps AS (
-    SELECT * FROM {{ ref('stg_laps') }}
-    WHERE lap_duration IS NOT NULL
+**`models/marts/analytics/fct_penalties.sql`**
+
+**New.** Penalties parsed from race-control wording; anything that does not parse stays `NULL` instead of being guessed. A stewards' "PENALTY SERVED" notice is the same penalty, not a second one: those notices are removed from the rows and their lap is attached to the matching penalty as `served_lap`.
+
+```sql
+{# Penalties parsed from race control text. Parsing depends on the FIA message wording, so unparsed fields stay NULL
+   instead of guessing.
+   The stewards also announce when a penalty has been SERVED ('FIA STEWARDS: PENALTY SERVED - 10 SECOND TIME PENALTY FOR CAR 31 (OCO) - ...'). That is the
+   same penalty, not a second one: real data counted it twice (laps 37 and 51). Served notices are removed from the penalty rows and their lap is attached
+   to the matching penalty (same session, driver and seconds) as served_lap. #}
+WITH msgs AS (
+    SELECT * FROM {{ ref('stg_race_control') }} WHERE upper(message) LIKE '%PENALTY%'
 ),
 
-race_control_events AS (
-    SELECT 
-        session_key,
+parsed AS (
+    SELECT
+        session_key, meeting_key,
+        COALESCE(driver_number, {{ f1_try_cast_fn() }}({{ f1_regexp_extract('message', 'CAR (\\d+)') }} AS {{ f1_type('int') }})) AS driver_number,
+        race_control_timestamp AS penalty_timestamp,
         lap_number,
-        STRING_AGG(DISTINCT category, ', ') AS incident_categories,
-        MAX(flag) AS primary_flag
-    FROM {{ ref('stg_race_control') }}
-    WHERE lap_number IS NOT NULL
-    GROUP BY 
-        session_key, 
-        lap_number
+        {{ f1_try_cast_fn() }}({{ f1_regexp_extract('message', '(\\d+) SECOND') }} AS {{ f1_type('int') }}) AS penalty_seconds,
+        CASE
+            WHEN upper(message) LIKE '%DRIVE THROUGH%' THEN 'DRIVE THROUGH'
+            WHEN upper(message) LIKE '%STOP/GO%' OR upper(message) LIKE '%STOP AND GO%' THEN 'STOP/GO'
+            WHEN upper(message) LIKE '%SECOND%' THEN 'TIME PENALTY'
+            ELSE 'OTHER'
+        END AS penalty_type,
+        {{ f1_regexp_extract('message', ' - (.*)$') }} AS reason,
+        message,
+        upper(message) LIKE '%SERVED%' AS is_served_notice
+    FROM msgs
+),
+
+served AS (
+    SELECT session_key, driver_number, penalty_seconds, MIN(lap_number) AS served_lap
+    FROM parsed WHERE is_served_notice
+    GROUP BY session_key, driver_number, penalty_seconds
 )
 
 SELECT
-    l.session_key,
-    l.meeting_key,
-    l.driver_number,
-    l.lap_number,
-    l.lap_duration AS lap_time_seconds,
-    
-    CASE 
-        WHEN r.incident_categories IS NOT NULL THEN TRUE 
-        ELSE FALSE 
-    END AS is_affected_by_incident,
-    
-    r.incident_categories,
-    r.primary_flag
-
-FROM laps l
-LEFT JOIN race_control_events r
-    ON l.session_key = r.session_key
-    AND l.lap_number = r.lap_number
+    p.session_key, p.meeting_key, p.driver_number, p.penalty_timestamp, p.lap_number, p.penalty_seconds, p.penalty_type, p.reason, p.message,
+    s.served_lap
+FROM parsed p
+LEFT JOIN served s
+    ON p.session_key = s.session_key AND p.driver_number = s.driver_number AND p.penalty_seconds = s.penalty_seconds
+WHERE NOT p.is_served_notice
 ```
 
 **`models/marts/analytics/fct_race_results.sql`**
 
-Final classification joined to the starting grid, with positions gained or lost. Materialised as a table.
+Classification, status, qualifying split times and **championship points** from the **season-aware** `f1_points_system` seed (`season, session_type, position, points`: Race scales 2018 to 2027, Sprint 3-2-1 in 2021 and 8-1 from 2022 on; a season missing from the seed fails `assert_every_season_has_points_scale` instead of scoring 0). OpenF1 keys starting-grid rows to the session that **set** the grid (Qualifying for a Race, Sprint Qualifying or Shootout for a Sprint), so the grid is matched directly or through that session, and `grid_source` says which.
 
 ```sql
-{{ config(
-    materialized='table'
-) }}
-
-WITH session_results AS (
+{# Classification + championship points. Points follow the SEASON-AWARE seed f1_points_system (season, session_type, position),
+   so a Sprint in 2021 scores 3-2-1 and a Sprint in 2023 scores 8-1. Seasons missing from the seed score 0 and are caught by
+   tests/assert_every_season_has_points_scale.sql. The fastest-lap bonus applies to Race sessions up to
+   var fastest_lap_bonus_last_year for drivers finishing in the top 10. DSQ/DNS score 0. #}
+WITH results AS (
     SELECT * FROM {{ ref('stg_session_result') }}
 ),
-
-starting_grid AS (
+grid AS (
     SELECT * FROM {{ ref('stg_starting_grid') }}
 ),
-
-race_results_calculated AS (
+sessions AS (
+    SELECT session_key, meeting_key, session_name, session_type, year, date_start AS session_start_time FROM {{ ref('stg_sessions') }}
+),
+{# OpenF1 can key starting_grid rows to the session that SET the grid (Qualifying for a Race, Sprint Qualifying/Shootout for a Sprint)
+   instead of the race itself. grid_session maps each race to that session; the direct match always wins. #}
+grid_session AS (
+    SELECT session_key, grid_session_key FROM (
+        SELECT s.session_key, q.session_key AS grid_session_key,
+               ROW_NUMBER() OVER (PARTITION BY s.session_key ORDER BY q.session_start_time DESC) AS rn
+        FROM sessions s
+        JOIN sessions q ON q.meeting_key = s.meeting_key AND q.session_start_time < s.session_start_time
+         AND ((s.session_type = 'Race' AND q.session_name = 'Qualifying')
+           OR (s.session_type = 'Sprint' AND q.session_name IN ('Sprint Qualifying', 'Sprint Shootout')))
+        WHERE s.session_type IN ('Race', 'Sprint')
+    ) m WHERE rn = 1
+),
+fastest AS (
+    SELECT session_key, driver_number FROM {{ ref('fct_fastest_laps') }} WHERE is_overall_fastest_lap
+),
+calc AS (
     SELECT
-        r.session_key,
-        r.meeting_key,
-        r.driver_number,
-        g.grid_position,
+        r.session_key, r.meeting_key, r.driver_number,
+        s.session_type, s.year, s.session_start_time,
+        COALESCE(g1.grid_position, g2.grid_position) AS grid_position,
+        CASE WHEN g1.grid_position IS NOT NULL THEN 'starting_grid' WHEN g2.grid_position IS NOT NULL THEN 'starting_grid_via_qualifying' END AS grid_source,
         r.position AS final_position,
-        
-        CASE 
-            WHEN g.grid_position IS NOT NULL AND r.position IS NOT NULL 
-            THEN (g.grid_position - r.position)
-            ELSE NULL 
-        END AS positions_gained_or_lost,
-        
-        r.duration AS race_duration,
+        CASE WHEN COALESCE(g1.grid_position, g2.grid_position) IS NOT NULL AND r.position IS NOT NULL
+             THEN COALESCE(g1.grid_position, g2.grid_position) - r.position END AS positions_gained_or_lost,
+        CASE
+            WHEN r.dsq THEN 'DSQ' WHEN r.dns THEN 'DNS' WHEN r.dnf THEN 'DNF'
+            WHEN r.gap_to_leader_lapped_text IS NOT NULL THEN 'Lapped'
+            ELSE 'Finished'
+        END AS classification_status,
+        r.number_of_laps AS laps_completed,
+        r.race_time_seconds,
+        r.gap_to_leader_seconds,
+        r.gap_to_leader_lapped_text,
+        r.q1_seconds, r.q2_seconds, r.q3_seconds,
+        r.duration_raw AS race_duration,
         r.dns AS did_not_start,
-        r.dsq AS disqualified
-        
-    FROM session_results r
-    LEFT JOIN starting_grid g
-        ON r.session_key = g.session_key
-        AND r.driver_number = g.driver_number
+        r.dsq AS disqualified,
+        (f.driver_number IS NOT NULL) AS set_session_fastest_lap
+    FROM results r
+    LEFT JOIN grid g1 ON r.session_key = g1.session_key AND r.driver_number = g1.driver_number
+    LEFT JOIN grid_session gs ON r.session_key = gs.session_key
+    LEFT JOIN grid g2 ON gs.grid_session_key = g2.session_key AND r.driver_number = g2.driver_number
+    LEFT JOIN sessions s ON r.session_key = s.session_key
+    LEFT JOIN fastest f ON r.session_key = f.session_key AND r.driver_number = f.driver_number
 )
+SELECT
+    c.*,
+    (c.final_position = 1) AS is_winner,
+    (c.final_position <= 3) AS is_podium,
+    CASE WHEN c.classification_status IN ('DSQ', 'DNS') THEN 0 ELSE COALESCE(p.points, 0) END AS position_points,
+    CASE WHEN c.session_type = 'Race' AND c.set_session_fastest_lap AND c.final_position <= 10
+              AND c.classification_status NOT IN ('DSQ', 'DNS') AND c.year <= {{ var('fastest_lap_bonus_last_year') }}
+         THEN 1 ELSE 0 END AS fastest_lap_bonus_points,
+    CASE WHEN c.classification_status IN ('DSQ', 'DNS') THEN 0 ELSE COALESCE(p.points, 0) END
+      + CASE WHEN c.session_type = 'Race' AND c.set_session_fastest_lap AND c.final_position <= 10
+                  AND c.classification_status NOT IN ('DSQ', 'DNS') AND c.year <= {{ var('fastest_lap_bonus_last_year') }}
+             THEN 1 ELSE 0 END AS total_points
+FROM calc c
+LEFT JOIN {{ ref('f1_points_system') }} p
+    ON c.year = p.season AND c.session_type = p.session_type AND c.final_position = p.position
+```
 
-SELECT * FROM race_results_calculated
+**`models/marts/analytics/fct_points_progression.sql`**
+
+**New.** Season points after every Race or Sprint, computed from `fct_race_results`.
+
+```sql
+{# Season points after every Race/Sprint, computed from fct_race_results (not from the beta standings endpoint),
+   so it is complete for every session that has results. #}
+WITH scored AS (
+    SELECT r.session_key, r.driver_number, r.year, r.session_type, r.total_points, s.session_start_time
+    FROM {{ ref('fct_race_results') }} r
+    JOIN {{ ref('dim_sessions') }} s ON r.session_key = s.session_key
+    WHERE r.session_type IN ('Race', 'Sprint')
+),
+cum AS (
+    SELECT
+        *,
+        SUM(total_points) OVER (PARTITION BY year, driver_number ORDER BY session_start_time, session_key) AS cumulative_points
+    FROM scored
+)
+SELECT
+    session_key, year, driver_number, session_type, session_start_time,
+    total_points AS points_scored_in_session,
+    cumulative_points,
+    MAX(cumulative_points) OVER (PARTITION BY year, session_key) - cumulative_points AS gap_to_points_leader,
+    RANK() OVER (PARTITION BY year, session_key ORDER BY cumulative_points DESC) AS championship_position_after_session
+FROM cum
 ```
 
 **`models/marts/analytics/fct_race_intervals.sql`**
 
-Gaps to the leader and car ahead as numbers, with lapped drivers kept as text and a DRS-range flag. Uses `TRY_CAST`.
+Gaps to the leader and the car ahead as numbers, with lapped drivers kept as text, a DRS-range proxy flag and a sample duration for time-weighting.
 
 ```sql
-WITH intervals AS (
-    SELECT * FROM {{ ref('stg_intervals') }}
+{# Time series of gaps. Lapped cars have text gaps ('+1 LAP') which become NULL numbers with the text kept in
+   lapped_status. is_in_drs_range is a PROXY: real DRS eligibility is judged at detection points, which the API
+   does not expose. sample_duration_seconds lets downstream models time-weight the samples. #}
+WITH base AS (
+    SELECT
+        iv.session_key, iv.meeting_key, iv.driver_number, iv.interval_timestamp,
+        {{ f1_try_cast_fn() }}(iv.gap_to_leader_raw AS {{ f1_type('double') }}) AS gap_to_leader_seconds,
+        {{ f1_try_cast_fn() }}(iv.interval_raw AS {{ f1_type('double') }}) AS gap_to_car_ahead_seconds,
+        CASE WHEN iv.gap_to_leader_raw LIKE '+%LAP%' THEN iv.gap_to_leader_raw END AS lapped_status,
+        -- COALESCE: the last sample of a driver has no next sample. DuckDB's LEAST ignores NULLs (giving 60) but BigQuery's
+        -- LEAST returns NULL if any argument is NULL, so the cap is made explicit.
+        LEAST(60, COALESCE({{ f1_seconds_between('iv.interval_timestamp', 'LEAD(iv.interval_timestamp) OVER (PARTITION BY iv.session_key, iv.driver_number ORDER BY iv.interval_timestamp)') }}, 60))
+            AS sample_duration_seconds
+    FROM {{ ref('stg_intervals') }} iv
+),
+with_lap AS (
+    {{ f1_asof_join(left='base', right=ref('stg_laps'), on=['session_key', 'driver_number'], left_ts='interval_timestamp', right_ts='date_start',
+        left_cols=['session_key', 'meeting_key', 'driver_number', 'interval_timestamp', 'gap_to_leader_seconds',
+                   'gap_to_car_ahead_seconds', 'lapped_status', 'sample_duration_seconds'],
+        right_cols=['lap_number']) }}
 )
-
 SELECT
-    session_key,
-    meeting_key,
-    driver_number,
-    
-    -- Safely convert to double. Text like "+2 LAPS" safely becomes NULL.
-    TRY_CAST(gap_to_leader_raw AS DOUBLE) AS gap_to_leader_seconds,
-    TRY_CAST(interval_raw AS DOUBLE) AS gap_to_car_ahead_seconds,
-    
-    -- Optional: Preserve the raw text so you can flag lapped drivers in Power BI
-    CASE 
-        WHEN gap_to_leader_raw LIKE '%LAP%' THEN gap_to_leader_raw
-        ELSE NULL 
-    END AS lapped_status,
-    
-    -- Business Logic: Identify if the driver is in DRS range
-    -- We use the safe numeric conversion here for the math
-    CASE 
-        WHEN TRY_CAST(interval_raw AS DOUBLE) <= 1.000 THEN TRUE 
-        ELSE FALSE 
-    END AS is_in_drs_range
-
-FROM intervals
--- Filter out the leader, as they don't have a gap to the car ahead!
-WHERE interval_raw IS NOT NULL
+    b.*,
+    COALESCE(b.gap_to_car_ahead_seconds <= {{ var('drs_range_seconds') }}, FALSE) AS is_in_drs_range,
+    COALESCE(b.gap_to_car_ahead_seconds <= {{ var('dirty_air_seconds') }}, FALSE) AS is_in_dirty_air
+FROM with_lap b
 ```
 
-**`models/marts/analytics/fct_tire_strategy.sql`**
+**`models/marts/analytics/fct_lap_gaps.sql`**
 
-Every lap mapped to its stint, tyre compound and current tyre age.
+**New.** Per driver per lap: seconds spent in DRS range and in dirty air, and the gap evolution, time-weighted.
 
 ```sql
-{{ config(
-    materialized='table'
-) }}
-
-with laps as (
-    select
-        session_key,
-        meeting_key,
-        driver_number,
-        lap_number,
-        lap_duration,
-        -- DuckDB handles boolean expressions directly without an IIF or CASE statement
-        (lap_duration is not null) as is_valid_lap
-    from {{ ref('stg_laps') }}
-),
-
-stints as (
-    select
-        session_key,
-        driver_number,
-        stint_number,
-        tyre_compound,
-        lap_start,
-        lap_end,
-        tyre_age_at_start
-    from {{ ref('stg_stints') }}
-),
-
-tire_strategy_mapping as (
-    select
-        l.session_key,
-        l.meeting_key,
-        l.driver_number,
-        l.lap_number,
-        l.lap_duration,
-        l.is_valid_lap,
-        s.stint_number,
-        s.tyre_compound,
-        s.lap_start as stint_lap_start,
-        s.lap_end as stint_lap_end,
-        s.tyre_age_at_start,
-        -- Calculate real-time tire age for each lap in the strategy
-        s.tyre_age_at_start + (l.lap_number - s.lap_start) as current_tyre_age
-    from laps l
-    inner join stints s
-        on l.session_key = s.session_key
-        and l.driver_number = s.driver_number
-        and l.lap_number >= s.lap_start
-        and l.lap_number <= s.lap_end
-)
-
-select * from tire_strategy_mapping
+{# Per driver per lap: how long was the car in DRS range / dirty air, and the gap evolution. Time-weighted. #}
+SELECT
+    session_key, meeting_key, driver_number, lap_number,
+    COUNT(*) AS interval_samples,
+    SUM(sample_duration_seconds) AS covered_seconds,
+    SUM(CASE WHEN is_in_drs_range THEN sample_duration_seconds END) AS seconds_in_drs_range,
+    SUM(CASE WHEN is_in_dirty_air THEN sample_duration_seconds END) AS seconds_in_dirty_air,
+    SUM(CASE WHEN is_in_dirty_air THEN sample_duration_seconds END) / NULLIF(SUM(sample_duration_seconds), 0) AS pct_lap_in_dirty_air,
+    AVG(gap_to_car_ahead_seconds) AS avg_gap_to_car_ahead_seconds,
+    MIN(gap_to_car_ahead_seconds) AS min_gap_to_car_ahead_seconds,
+    {{ f1_arg_max('gap_to_leader_seconds', 'interval_timestamp') }} AS gap_to_leader_last_sample_seconds
+FROM {{ ref('fct_race_intervals') }}
+WHERE lap_number IS NOT NULL
+GROUP BY session_key, meeting_key, driver_number, lap_number
 ```
 
+**`models/marts/analytics/fct_race_trace.sql`**
 
-> **Design note on `fct_weather_impact`.** Weather is sampled every minute or so, while laps are discrete events. The model keeps it simple: it averages weather **per session** and attaches those averages to every lap. That is easy to explain and cheap, but it cannot say "it was raining on lap 41". A true **time-aligned** version would use an ASOF join on the lap start time. Chapter 7 teaches ASOF on telemetry; applying the same pattern to weather is a good **exercise** (not implemented in the project).
+**New.** The classic race trace: each driver's gap to the leader every lap, from cumulative lap time.
+
+```sql
+{# The classic "race trace": for every lap, each driver's gap to the leader computed from cumulative lap times
+   (independent of the sampled intervals endpoint), plus position on cumulative time. #}
+SELECT
+    session_key, meeting_key, driver_number, lap_number,
+    lap_time_seconds,
+    cumulative_race_time_seconds,
+    cumulative_race_time_seconds - MIN(cumulative_race_time_seconds) OVER (PARTITION BY session_key, lap_number)
+        AS gap_to_leader_by_cumulative_time_seconds,
+    RANK() OVER (PARTITION BY session_key, lap_number ORDER BY cumulative_race_time_seconds) AS position_by_cumulative_time,
+    position_end AS reported_position_end,
+    tyre_compound, track_status, is_in_lap
+FROM {{ ref('int_lap_context') }}
+WHERE session_type IN ('Race', 'Sprint') AND cumulative_race_time_seconds IS NOT NULL
+```
+
+> **Design note on `fct_weather_impact` (updated).** Weather is sampled about once a minute, while laps are discrete events. The first edition averaged weather **per session** and attached the average to every lap, which cannot say "it was raining on lap 41". The second edition does the time-aligned version it suggested as an exercise: an **ASOF join** attaches the latest reading at or before each lap's start (inside `int_lap_context`), and the old session averages are kept as extra columns for compatibility.
 
 #### **Task 3: Run the Marts**
 
 ```bash
-dbt run --select marts
-dbt run                       # everything: staging + marts
+dbt build --select +marts      # everything the marts need (staging, intermediate) plus the marts and their tests
+dbt build                      # the whole project
 ```
 
-The first fully clean run built **33 models**; with `fct_tire_strategy` added, the project has **18 staging + 2 dimension + 14 fact models** once telemetry (Chapter 7) is included. Power BI later connects to those 16 mart tables.
+> **Selection tip.** `+model` means "this model and everything *upstream*", `model+` means "this model and everything *downstream*", `+model+` means both. A common mistake is `dbt build --select int_lap_context+` on a warehouse that has never built `int_track_status_periods`: it selects the spine and what depends on it, **not** what the spine depends on, and fails with `Catalog Error: Table with name int_track_status_periods does not exist`. Use `+int_lap_context+`.
+
+The project now has **19 staging views, 2 intermediate tables, 4 dimensions and about 25 fact tables**. Power BI connects to the mart tables (Chapter 9).
 
 #### **Task 4: Add Tests and Documentation**
 
@@ -2702,108 +3994,253 @@ Create **models/marts/schema.yml**. Descriptions here become your documentation 
 ```yaml
 version: 2
 
+# Grain tests (unique_combination_of_columns) are ERRORS: a duplicated grain silently corrupts every downstream
+# aggregate. Plausibility checks live in tests/ and are warnings where real-world data can legitimately surprise.
+
 models:
-  - name: fct_race_results
-    description: "A fact table containing the final race results for each session, with grid position and positions gained or lost."
-    columns:
-      - name: session_key
-        description: "The unique identifier for the race session."
-        tests:
-          - not_null
-
-      - name: driver_number
-        description: "The unique number assigned to the driver."
-        tests:
-          - not_null
-
-      - name: final_position
-        description: "Where the driver finished the race."
-
-  - name: fct_overtakes
-    description: "A chronological record of every overtake during a session."
-    columns:
-      - name: session_key
-        tests:
-          - not_null
-
-      - name: overtaking_driver_number
-        tests:
-          - not_null
-
-      - name: overtaken_driver_number
-        tests:
-          - not_null
-
   - name: dim_drivers
-    description: "Master list of drivers with their latest team and biographical info."
+    description: "Latest known identity and team per driver number. For team at a point in time use dim_driver_session."
     columns:
       - name: driver_number
-        description: "The permanent racing number of the driver."
-        tests:
-          - unique
-          - not_null
+        data_tests: [unique, not_null]
       - name: full_name
-        tests:
+        data_tests: [not_null]
+
+  - name: dim_driver_session
+    description: "Driver identity and team for each session (keeps mid-season team changes)."
+    data_tests:
+      - unique_combination_of_columns: {arguments: {combination_of_columns: [session_key, driver_number]}}
+    columns:
+      - name: session_key
+        data_tests:
+          - relationships: {arguments: {to: ref('dim_sessions'), field: session_key}}
+
+  - name: dim_sessions
+    description: "Every session enriched with its meeting and circuit."
+    columns:
+      - name: session_key
+        data_tests: [unique, not_null]
+      - name: session_type
+        data_tests:
+          - accepted_values:
+              arguments:
+                values: ['Practice', 'Qualifying', 'Race', 'Sprint', 'Sprint Qualifying', 'Sprint Shootout']
+              config: {severity: warn}
+
+  - name: dim_circuits
+    description: "One row per circuit. No corner geometry (not provided by OpenF1)."
+    columns:
+      - name: circuit_key
+        data_tests: [unique, not_null]
+
+  - name: fct_lap_performance
+    description: "Lap-level pace with tyre, track status and normalisation flags. Filter is_representative_lap for pace work."
+    data_tests:
+      - unique_combination_of_columns: {arguments: {combination_of_columns: [session_key, driver_number, lap_number]}}
+    columns:
+      - name: session_key
+        data_tests:
           - not_null
+          - relationships: {arguments: {to: ref('dim_sessions'), field: session_key}}
+      - name: track_status
+        data_tests:
+          - accepted_values: {arguments: {values: ['GREEN', 'YELLOW', 'VSC', 'SC', 'RED']}}
+      - name: tyre_compound
+        data_tests:
+          - accepted_values:
+              arguments: {values: ['SOFT', 'MEDIUM', 'HARD', 'INTERMEDIATE', 'WET', 'UNKNOWN', 'TEST_UNKNOWN']}
+              config: {severity: warn}
+      - name: fuel_corrected_lap_time_seconds
+        description: "ASSUMPTION-DRIVEN: lap time minus var fuel_effect_seconds_per_lap x laps remaining. Race/Sprint only."
 
   - name: fct_fastest_laps
-    description: "The single fastest lap per driver in each session."
+    description: "Best lap, personal-best sectors, theoretical best lap and ranking per driver per session."
+    data_tests:
+      - unique_combination_of_columns: {arguments: {combination_of_columns: [session_key, driver_number]}}
     columns:
-      - name: session_key
-        tests:
-          - not_null
-      - name: driver_number
-        tests:
-          - not_null
       - name: fastest_lap_time_seconds
-        description: "The duration of the lap in seconds."
-        tests:
-          - not_null
+        data_tests: [not_null]
+      - name: theoretical_best_lap_seconds
+        description: "Sum of the driver's best three sectors (may be NULL if a sector time is missing)."
+      - name: is_overall_fastest_lap
+        description: "TRUE for the driver holding the session's fastest lap."
 
-  - name: fct_pit_stops
-    description: "Pit lane time for each completed pit stop."
+  - name: fct_stints
+    description: "One row per stint with pace and tyre degradation (seconds lost per lap of tyre age)."
+    data_tests:
+      - unique_combination_of_columns: {arguments: {combination_of_columns: [session_key, driver_number, stint_number]}}
     columns:
-      - name: session_key
-        tests:
-          - not_null
-      - name: driver_number
-        tests:
-          - not_null
-      - name: pit_lane_time_seconds
-        description: "Total time spent in the pit lane."
-        tests:
-          - not_null
-
-  - name: fct_weather_impact
-    description: "Each lap joined to session-level average weather (air temperature, track temperature, rain flag)."
-    columns:
-      - name: session_key
-        tests:
-          - not_null
-      - name: driver_number
-        tests:
-          - not_null
-      - name: lap_time_seconds
-        tests:
-          - not_null
-      - name: avg_track_temperature
-        description: "Average track temperature in Celsius across the whole session."
+      - name: degradation_seconds_per_lap
+        description: "Regression slope over representative laps; NULL when fewer than var min_stint_laps_for_degradation."
 
   - name: fct_tire_strategy
-    description: "Granular fact table mapping every completed lap to its respective tire stint, compound type, and real-time tire age."
+    description: "One row per driver per session: compound sequence, stop count and stint lengths."
+    data_tests:
+      - unique_combination_of_columns: {arguments: {combination_of_columns: [session_key, driver_number]}}
+
+  - name: fct_pit_stops
+    description: "One row per pit stop with time lost, position change and slow-stop flag."
+    data_tests:
+      - unique_combination_of_columns: {arguments: {combination_of_columns: [session_key, driver_number, stop_number]}}
+    columns:
+      - name: pit_lane_time_seconds
+        description: "Pit entry to exit as reported by OpenF1 (NOT stationary time)."
+        data_tests: [not_null]
+      - name: time_lost_seconds
+        description: "In-lap + out-lap minus 2x the driver's median clean lap. Not meaningful under SC/VSC (see is_under_neutralisation)."
+
+  - name: fct_penalties
+    description: "Penalties parsed from race control messages; unparsed fields are NULL."
     columns:
       - name: session_key
-        description: "Unique identifier for the session."
-        tests:
-          - not_null
-      - name: driver_number
-        description: "The racing number of the driver."
-      - name: lap_number
-        description: "The specific lap number."
-      - name: tyre_compound
-        description: "The tire compound used (SOFT, MEDIUM, HARD, INTERMEDIATE, WET)."
-      - name: current_tyre_age
-        description: "Calculated age of the tire (in laps completed) during this specific lap."
+        data_tests: [not_null]
+
+  - name: fct_lap_incidents
+    description: "Lap-level track status and race control activity matched by time window."
+    data_tests:
+      - unique_combination_of_columns: {arguments: {combination_of_columns: [session_key, driver_number, lap_number]}}
+
+  - name: fct_race_intervals
+    description: "Gap time series. is_in_drs_range is a proxy (<= var drs_range_seconds), not the official detection."
+    data_tests:
+      - unique_combination_of_columns: {arguments: {combination_of_columns: [session_key, driver_number, interval_timestamp]}}
+
+  - name: fct_lap_gaps
+    description: "Time-weighted DRS-range / dirty-air exposure per driver per lap."
+    data_tests:
+      - unique_combination_of_columns: {arguments: {combination_of_columns: [session_key, driver_number, lap_number]}}
+
+  - name: fct_weather_impact
+    description: "Each lap with the weather at lap start (ASOF join) plus session averages."
+    data_tests:
+      - unique_combination_of_columns: {arguments: {combination_of_columns: [session_key, driver_number, lap_number]}}
+
+  - name: fct_race_results
+    description: "Classification, status, points (current scales) and qualifying split times."
+    data_tests:
+      - unique_combination_of_columns: {arguments: {combination_of_columns: [session_key, driver_number]}}
+    columns:
+      - name: classification_status
+        data_tests:
+          - accepted_values: {arguments: {values: ['Finished', 'Lapped', 'DNF', 'DNS', 'DSQ']}}
+
+  - name: fct_points_progression
+    description: "Cumulative season points per driver after each Race/Sprint, from fct_race_results."
+    data_tests:
+      - unique_combination_of_columns: {arguments: {combination_of_columns: [session_key, driver_number]}}
+
+  - name: fct_overtakes
+    description: "Overtakes with lap, tyre, DRS and pit-cycle context."
+    columns:
+      - name: session_key
+        data_tests: [not_null]
+      - name: overtaking_driver_number
+        data_tests: [not_null]
+      - name: overtaken_driver_number
+        data_tests: [not_null]
+
+  - name: fct_race_trace
+    description: "Gap to leader per lap from cumulative lap time (race trace)."
+    data_tests:
+      - unique_combination_of_columns: {arguments: {combination_of_columns: [session_key, driver_number, lap_number]}}
+
+  - name: fct_telemetry
+    description: >
+      Car telemetry with ASOF-joined position and lap number. Incremental by session.
+      Uniqueness is deliberately not tested here (tens of millions of rows); see assert_telemetry_speed_plausible.
+    columns:
+      - name: session_key
+        data_tests: [not_null]
+      - name: telemetry_timestamp
+        data_tests: [not_null]
+
+  - name: fct_telemetry_lap_summary
+    description: "Per-lap telemetry KPIs (top speed, throttle/brake application, braking zones, DRS, gear usage)."
+    data_tests:
+      - unique_combination_of_columns: {arguments: {combination_of_columns: [session_key, driver_number, lap_number]}}
+
+  - name: fct_telemetry_distance_trace
+    description: "Telemetry on a distance axis (var distance_bin_metres) for lap-to-lap comparison."
+    data_tests:
+      - unique_combination_of_columns: {arguments: {combination_of_columns: [session_key, driver_number, lap_number, distance_bin]}}
+
+  - name: fct_lap_time_delta_trace
+    description: "Each driver's best lap vs the session fastest lap along the lap distance."
+
+  - name: fct_championship_standings
+    description: "Driver standings snapshots from the (beta) OpenF1 championship endpoint."
+    columns:
+      - name: session_key
+        data_tests: [not_null]
+
+  - name: fct_constructor_standings
+    description: "Constructor standings snapshots from the (beta) OpenF1 championship endpoint."
+
+  - name: fct_driver_positions
+    description: "Position change events with the previous position."
+
+  - name: fct_team_radio
+    description: "Team radio recording metadata (no transcription)."
+
+  - name: fct_compound_pace_model
+    description: "Per driver per compound: fresh-tyre pace, degradation slope and r-squared from clean fuel-corrected laps. Input to the strategy simulator."
+    data_tests:
+      - unique_combination_of_columns: {arguments: {combination_of_columns: [session_key, driver_number, tyre_compound]}}
+
+  - name: fct_pit_loss_by_circuit
+    description: "Typical pit stop cost per circuit, split into green-flag and neutralised stops."
+    columns:
+      - name: circuit_key
+        data_tests: [unique, not_null]
+
+  - name: fct_undercut_overcut
+    description: "Pairs of related pit stops where the attacker ran directly behind the defender, with the outcome. See model header for limits."
+    data_tests:
+      - unique_combination_of_columns:
+          arguments: {combination_of_columns: [session_key, attacker_driver_number, attacker_stop_number, defender_driver_number, defender_stop_number]}
+    columns:
+      - name: strategy_type
+        data_tests:
+          - accepted_values: {arguments: {values: ['UNDERCUT', 'OVERCUT', 'SAME_LAP']}}
+
+  - name: fct_safety_car_events
+    description: "SC / VSC / red periods in Race sessions with the race laps they covered."
+    columns:
+      - name: track_status
+        data_tests:
+          - accepted_values: {arguments: {values: ['SC', 'VSC', 'RED']}}
+      - name: start_lap
+        data_tests: [not_null]
+
+  - name: fct_safety_car_hazard
+    description: "Empirical-Bayes probability of an SC/VSC start in the next N laps per circuit. Weak per-circuit evidence: check low_sample."
+    data_tests:
+      - unique_combination_of_columns: {arguments: {combination_of_columns: [circuit_key, track_status, laps_remaining]}}
+    columns:
+      - name: p_at_least_one_start
+        data_tests: [not_null]
+
+  - name: dim_session_corners
+    description: >
+      DERIVED corners (detected from reference-lap telemetry, not official turn numbers). One row per detected apex per session.
+    data_tests:
+      - unique_combination_of_columns: {arguments: {combination_of_columns: [session_key, corner_number]}}
+    columns:
+      - name: speed_class
+        data_tests:
+          - accepted_values: {arguments: {values: ['SLOW', 'MEDIUM', 'FAST']}}
+
+  - name: fct_corner_performance
+    description: "Entry/apex/exit speed, braking distance and throttle pick-up per driver per lap per detected corner."
+    data_tests:
+      - unique_combination_of_columns: {arguments: {combination_of_columns: [session_key, driver_number, lap_number, corner_number]}}
+
+  - name: fct_radio_messages
+    description: >
+      Transcribed team radio with race context and KEYWORD tags (heuristic, not NLP). Empty unless var enable_radio_transcripts is true.
+    columns:
+      - name: recording_url
+        data_tests: [unique]
 ```
 
 Run the tests:
@@ -2812,9 +4249,40 @@ Run the tests:
 dbt test
 ```
 
-At the last recorded test run, all data tests passed. Each test is a query that returns the **bad rows**; zero rows means pass.
+Each test is a query that returns the **bad rows**; zero rows means pass. A **grain test** (`unique_combination_of_columns`) fails when a row is duplicated, and one of those caught the overlapping-stint bug on real data (see the pitfalls below).
 
 > **Documentation drift, a lesson in itself.** An earlier version of this file described `is_overall_fastest_lap` and `is_slow_stop` columns and an ASOF join for weather. **None of those exist in the models.** dbt did not complain because only the *tested* columns are checked, so the docs lied quietly. The version above is corrected to match the SQL. Treat `schema.yml` as code: review it whenever a model changes.
+
+**The singular tests (new in the second edition).** Besides the tests in `schema.yml`, `dbt_f1_transformations/tests/` holds 24 queries written for this project. The custom generic test `unique_combination_of_columns` lives in `tests/generic/` and has **no package dependency** (the dbt package hub is not always reachable).
+
+| Test | What it protects | Severity |
+|---|---|---|
+| `assert_lap_times_positive` | no zero or negative lap time | error |
+| `assert_lap_start_times_increase` | lap *N+1* starts after lap *N* (catches duplicated or mis-numbered laps; `stg_laps` removes such source rows) | error |
+| `assert_stint_ranges_valid` | a stint cannot end before it starts or have negative tyre age (`stg_stints` removes such source rows) | error |
+| `assert_one_fastest_lap_per_session` | every session with laps has an overall-fastest row | error |
+| `assert_race_points_not_inflated` | duplicated result rows would inflate points | error |
+| `assert_undercut_outcome_consistent` | the recorded outcome agrees with the signed gap | error |
+| `assert_safety_car_probability_valid` | probabilities within 0 and 1 and never falling as the horizon grows | error |
+| `assert_telemetry_speed_plausible` | no negative speed or one above 400 km/h | error |
+| `assert_pit_lane_time_plausible` | pit-lane times between 10 and 120 s (`fct_pit_stops` is Race and Sprint only); a review of long race stops | warn |
+| `assert_pit_stops_only_in_races` | `fct_pit_stops` holds no practice or qualifying garage visits | error |
+| `assert_circuit_pit_loss_is_plausible` | each circuit's median green-flag pit-lane time is a race-stop value (10 to 120 s) | error |
+| `assert_sprints_are_typed_sprint` | a sprint is typed `Sprint`, not `Race` | error |
+| `assert_sprint_points_use_sprint_scale` | sprint points come from the Sprint scale | error |
+| `assert_every_season_has_points_scale` | every loaded season has a points scale in the seed | error |
+| `assert_race_results_have_grid` | every race has at least one driver with a grid position | warn |
+| `assert_race_trace_leader_time_increases` | the leader's cumulative race time rises lap by lap | error on CI, **warn elsewhere** |
+| `assert_neutralisation_periods_are_bounded` | an SC/VSC with no closing message never runs past its cap | error |
+| `assert_neutralisation_periods_do_not_overlap` | SC/VSC periods in Race and Sprint sessions do not overlap | error on CI, **warn elsewhere** |
+| `assert_penalties_not_double_counted` | a "penalty served" notice is not counted as a second penalty | error on CI, **warn elsewhere** |
+| `assert_telemetry_samples_within_lap_window` | no telemetry sample is credited to a lap after that lap ended | error |
+| `assert_corner_apex_is_a_minimum` | on each session's reference lap, an apex is slower than its entry and exit | warn |
+| `assert_positions_in_range`, `assert_race_results_have_laps`, `assert_results_have_driver_dimension` | sanity and reconciliation | warn |
+
+**Why `assert_lap_start_times_increase` and `assert_stint_ranges_valid` are errors.** Both check the *source data*, and real OpenF1 data does contain such rows (the author's first real run reported 59 and 23). Instead of downgrading them to warnings, `stg_laps` and `stg_stints` now remove those rows, so the tests guard the staging layer's cleaning and stay strict everywhere. **Three newer tests are different.** `assert_race_trace_leader_time_increases`, `assert_neutralisation_periods_do_not_overlap` and `assert_penalties_not_double_counted` can fail on real data for reasons that need a human look, so their severity is set from the target name: `config(severity = 'error' if target.name == 'ci' else 'warn')`. `docs/ISSUES_CHECKLIST.md` lists what each real-data warning turned out to be.
+
+**The test suite was mutation-tested.** A test that has never failed proves nothing, so a copy of the synthetic data was deliberately corrupted (a duplicated lap, a 999 km/h telemetry sample, a duplicated grain) and the tests were confirmed to catch each. The fixtures also contain situations that real data produced: garage visits reported as pit stops, a Sprint typed as a Race, a VSC upgraded to a Safety Car and a penalty followed by its served notice.
 
 Generate and browse the documentation site:
 
@@ -2824,6 +4292,658 @@ dbt docs serve
 ```
 
 Open the **lineage graph** (the blue circle, bottom right): it shows every source flowing through staging into the marts. You get this for free from `ref()` and `source()`.
+
+#### **Task 5: Pit Strategy: Compound Pace, Pit Loss and Undercut/Overcut**
+
+New in the second edition. Three models turn lap and stop data into strategy questions.
+
+**Step 1: How fast is each tyre, and how quickly does it die?** `fct_compound_pace_model` fits a straight line of fuel-corrected lap time against tyre age for each driver and compound, over representative laps. The **intercept** is the pace on a fresh tyre, the **slope** is degradation in seconds per lap, and **r-squared** says how much a straight line explains. It needs `min_stint_laps_for_degradation` clean laps, otherwise it stays silent rather than report noise.
+
+```sql
+{# Per driver per compound: fuel-corrected lap time as a straight line in tyre age
+   (intercept = pace on fresh tyres, slope = degradation s/lap, r2 = how well a line explains it).
+   Feeds the race strategy simulator. Needs var min_stint_laps_for_degradation clean laps per compound. #}
+WITH laps AS (
+    SELECT
+        session_key, meeting_key, driver_number, tyre_compound,
+        CASE WHEN is_representative_lap AND tyre_age_this_lap IS NOT NULL AND COALESCE(fuel_corrected_lap_time_seconds, lap_time_seconds) IS NOT NULL
+             THEN COALESCE(fuel_corrected_lap_time_seconds, lap_time_seconds) END AS y,
+        CASE WHEN is_representative_lap AND tyre_age_this_lap IS NOT NULL AND COALESCE(fuel_corrected_lap_time_seconds, lap_time_seconds) IS NOT NULL
+             THEN {{ f1_cast('tyre_age_this_lap', 'double') }} END AS x
+    FROM {{ ref('int_lap_context') }}
+    WHERE tyre_compound IS NOT NULL
+)
+SELECT
+    session_key, meeting_key, driver_number, tyre_compound,
+    COUNT(y) AS clean_laps,
+    {{ f1_regr_intercept('y', 'x') }} AS fresh_tyre_pace_seconds,
+    {{ f1_regr_slope('y', 'x') }} AS degradation_seconds_per_lap,
+    {{ f1_r2('y', 'x') }} AS r_squared,
+    MIN(x) AS min_tyre_age,
+    MAX(x) AS max_tyre_age
+FROM laps
+GROUP BY session_key, meeting_key, driver_number, tyre_compound
+HAVING COUNT(y) >= {{ var('min_stint_laps_for_degradation') }}
+```
+
+**Step 2: What does a stop cost at this circuit?** `fct_pit_loss_by_circuit` summarises `fct_pit_stops` per circuit, separating green-flag stops from stops under a neutralisation. Under a safety car a stop is cheaper because the field is slow anyway, and `neutralisation_discount_ratio` measures how much cheaper. **Medians are exact:** the model computes them with window functions, because BigQuery has no exact grouped median and `APPROX_QUANTILES` would silently change the numbers (Chapter 10).
+
+```sql
+{# Typical cost of a stop at each circuit, split into green-flag and neutralised stops.
+   neutralisation_discount_ratio = how much cheaper a stop is under SC/VSC/red (NULL until both kinds are observed). #}
+WITH stops AS (
+    SELECT p.*, s.circuit_key, s.year
+    FROM {{ ref('fct_pit_stops') }} p
+    JOIN {{ ref('dim_sessions') }} s ON p.session_key = s.session_key
+),
+medians AS (
+    -- exact medians via window functions (BigQuery has no exact grouped median; APPROX_QUANTILES would only be approximate)
+    SELECT
+        *,
+        {{ f1_median_over('CASE WHEN NOT is_under_neutralisation THEN pit_lane_time_seconds END', 'circuit_key') }} AS med_green_lane,
+        {{ f1_median_over('CASE WHEN NOT is_under_neutralisation THEN time_lost_seconds END', 'circuit_key') }} AS med_green_lost,
+        {{ f1_median_over('CASE WHEN is_under_neutralisation THEN time_lost_seconds END', 'circuit_key') }} AS med_neutralised_lost
+    FROM stops
+)
+SELECT
+    circuit_key,
+    COUNT(*) AS stops_observed,
+    COUNT(CASE WHEN NOT is_under_neutralisation THEN 1 END) AS green_stops,
+    COUNT(CASE WHEN is_under_neutralisation THEN 1 END) AS neutralised_stops,
+    MAX(med_green_lane) AS median_green_pit_lane_time_seconds,
+    MAX(med_green_lost) AS median_green_time_lost_seconds,
+    MAX(med_neutralised_lost) AS median_neutralised_time_lost_seconds,
+    1 - MAX(med_neutralised_lost) / NULLIF(MAX(med_green_lost), 0) AS neutralisation_discount_ratio
+FROM medians
+GROUP BY circuit_key
+```
+
+**Step 3: Did the undercut work?** An **undercut** is stopping *earlier* than the car ahead, hoping fresh tyres gain more time than the stop costs. An **overcut** is staying out longer. `fct_undercut_overcut` pairs every two related stops (within `undercut_window_laps`) where one driver ran directly behind the other, and records who stopped first, the gap before and after both stops, and whether the attacker ended up ahead.
+
+```sql
+{#
+  One row per pair of related pit stops where the ATTACKER was running directly behind the DEFENDER.
+    UNDERCUT : attacker stopped first (fresh tyres, hoping to emerge ahead)
+    OVERCUT  : attacker stayed out longer (hoping the defender loses time on cold tyres / in traffic)
+    SAME_LAP : both stopped on the same lap (not a strategy contest)
+  attacker_ahead_after = position by cumulative race time one lap after BOTH stops have completed.
+  Limits: pairs only if adjacent before the first stop and within var undercut_max_gap_seconds; gap/position come from
+  lap-end cumulative times, so a position swap that happens and reverses inside one lap is invisible. Stops under
+  SC/VSC are kept but flagged (any_neutralisation) because the pit-loss maths changes completely there.
+#}
+WITH stops AS (
+    SELECT session_key, driver_number, stop_number, lap_number, tyre_age_before, is_under_neutralisation
+    FROM {{ ref('fct_pit_stops') }}
+),
+trace AS (
+    SELECT session_key, driver_number, lap_number,
+           position_by_cumulative_time AS pos, cumulative_race_time_seconds AS cum
+    FROM {{ ref('fct_race_trace') }}
+),
+pairs AS (
+    SELECT
+        a.session_key,
+        a.driver_number AS attacker_driver_number, a.stop_number AS attacker_stop_number, a.lap_number AS attacker_stop_lap,
+        a.tyre_age_before AS attacker_tyre_age_at_stop,
+        d.driver_number AS defender_driver_number, d.stop_number AS defender_stop_number, d.lap_number AS defender_stop_lap,
+        d.tyre_age_before AS defender_tyre_age_at_stop,
+        (a.is_under_neutralisation OR d.is_under_neutralisation) AS any_neutralisation,
+        LEAST(a.lap_number, d.lap_number) - 1 AS lap_before,
+        GREATEST(a.lap_number, d.lap_number) + 1 AS lap_after
+    FROM stops a
+    JOIN stops d
+        ON a.session_key = d.session_key
+        AND a.driver_number <> d.driver_number
+        AND ABS(a.lap_number - d.lap_number) <= {{ var('undercut_window_laps') }}
+),
+positioned AS (
+    SELECT
+        p.*,
+        ta.pos AS attacker_position_before, td.pos AS defender_position_before,
+        ta.cum - td.cum AS gap_before_seconds,
+        tae.pos AS attacker_position_after, tde.pos AS defender_position_after,
+        tae.cum - tde.cum AS gap_after_seconds
+    FROM pairs p
+    JOIN trace ta ON p.session_key = ta.session_key AND p.attacker_driver_number = ta.driver_number AND p.lap_before = ta.lap_number
+    JOIN trace td ON p.session_key = td.session_key AND p.defender_driver_number = td.driver_number AND p.lap_before = td.lap_number
+    LEFT JOIN trace tae ON p.session_key = tae.session_key AND p.attacker_driver_number = tae.driver_number AND p.lap_after = tae.lap_number
+    LEFT JOIN trace tde ON p.session_key = tde.session_key AND p.defender_driver_number = tde.driver_number AND p.lap_after = tde.lap_number
+)
+SELECT
+    session_key,
+    attacker_driver_number, attacker_stop_number, attacker_stop_lap, attacker_tyre_age_at_stop,
+    defender_driver_number, defender_stop_number, defender_stop_lap, defender_tyre_age_at_stop,
+    CASE WHEN attacker_stop_lap < defender_stop_lap THEN 'UNDERCUT'
+         WHEN attacker_stop_lap > defender_stop_lap THEN 'OVERCUT'
+         ELSE 'SAME_LAP' END AS strategy_type,
+    attacker_position_before, defender_position_before,
+    gap_before_seconds,
+    attacker_position_after, defender_position_after,
+    gap_after_seconds,
+    gap_before_seconds - gap_after_seconds AS gap_swing_seconds,
+    attacker_position_after < defender_position_after AS attacker_ahead_after,
+    any_neutralisation
+FROM positioned
+WHERE attacker_position_before = defender_position_before + 1
+  AND gap_before_seconds <= {{ var('undercut_max_gap_seconds') }}
+```
+
+**Limits to keep in mind**
+
+* Gap and position come from lap-end cumulative times, so a swap that happens and reverses inside a single lap is invisible.
+* Stops under a safety car are kept but flagged (`any_neutralisation`), because the pit-loss arithmetic is completely different there.
+* `time_lost_seconds` includes any traffic on the out-lap, and `pit_lane_time_seconds` is pit entry to exit as the API reports it, **not** stationary time (the API does not give that).
+
+#### **Task 6: Safety-Car Risk**
+
+New in the second edition. A strategy decision depends on how likely a safety car is, so this model estimates it from history.
+
+**Step 1: List the periods.** `fct_safety_car_events` puts each SC, VSC and red-flag period into a race lap (the highest lap any car had started when it began):
+
+```sql
+{# Every SC / VSC / red period in a Race, with the race lap it started and ended on (lap = the highest lap any car had
+   started at that moment, i.e. effectively the leader's lap). #}
+WITH periods AS (
+    SELECT p.session_key, s.circuit_key, s.year, p.track_status, p.period_start, p.period_end
+    FROM {{ ref('int_track_status_periods') }} p
+    JOIN {{ ref('dim_sessions') }} s ON p.session_key = s.session_key
+    WHERE s.session_type = 'Race'
+),
+laps AS (
+    SELECT session_key, lap_number, lap_start_ts FROM {{ ref('int_lap_context') }}
+),
+race_length AS (
+    SELECT session_key, MAX(lap_number) AS race_laps FROM laps GROUP BY session_key
+)
+SELECT
+    p.session_key, p.circuit_key, p.year, p.track_status, p.period_start, p.period_end,
+    MAX(CASE WHEN l.lap_start_ts <= p.period_start THEN l.lap_number END) AS start_lap,
+    MAX(l.lap_number) AS end_lap,
+    MAX(l.lap_number) - MAX(CASE WHEN l.lap_start_ts <= p.period_start THEN l.lap_number END) + 1 AS duration_laps,
+    {{ f1_seconds_between('p.period_start', 'p.period_end') }} AS duration_seconds,
+    MAX(r.race_laps) AS race_laps
+FROM periods p
+JOIN laps l ON p.session_key = l.session_key AND l.lap_start_ts <= p.period_end
+JOIN race_length r ON p.session_key = r.session_key
+GROUP BY p.session_key, p.circuit_key, p.year, p.track_status, p.period_start, p.period_end
+```
+
+**Step 2: Turn them into a probability.** `fct_safety_car_hazard` assumes a constant chance *h* that a safety car starts on any given lap, so the chance of at least one in the next *N* laps is `1 - (1 - h)^N`. The estimate of *h* for a circuit is **shrunk toward the all-circuit rate**: `(starts + k x global rate) / (laps + k)`, with `k = sc_prior_laps`. This is **empirical-Bayes shrinkage**, and it matters because OpenF1 history is short, so a circuit with two races and no safety car would otherwise be estimated at exactly zero risk.
+
+```sql
+{#
+  Probability of at least one SC (or VSC) starting in the next N laps, per circuit.
+  Model: constant per-lap start hazard h, so P(at least one in N laps) = 1 - (1 - h)^N.
+  h is shrunk toward the all-circuit rate:  h_shrunk = (starts + k * h_global) / (laps + k)  with k = var sc_prior_laps.
+  HONEST LIMITS: OpenF1 history is short (a handful of races per circuit), so per-circuit estimates are weak, which is
+  what the shrinkage and the low_sample flag are for; the constant-hazard assumption ignores lap-1 incidents,
+  weather and late-race effects; red flags are not modelled.
+#}
+WITH races AS (
+    SELECT s.circuit_key, s.session_key, MAX(l.lap_number) AS race_laps
+    FROM {{ ref('int_lap_context') }} l
+    JOIN {{ ref('dim_sessions') }} s ON l.session_key = s.session_key
+    WHERE s.session_type = 'Race'
+    GROUP BY s.circuit_key, s.session_key
+),
+exposure AS (
+    SELECT circuit_key, COUNT(*) AS races, SUM(race_laps) AS laps FROM races GROUP BY circuit_key
+),
+statuses AS (
+    SELECT 'SC' AS track_status UNION ALL SELECT 'VSC'
+),
+events AS (
+    SELECT circuit_key, track_status, COUNT(*) AS starts, AVG(duration_laps) AS avg_duration_laps,
+           COUNT(DISTINCT session_key) AS races_affected
+    FROM {{ ref('fct_safety_car_events') }}
+    WHERE track_status IN ('SC', 'VSC')
+    GROUP BY circuit_key, track_status
+),
+circuit_status AS (
+    SELECT e.circuit_key, e.races, e.laps, s.track_status,
+           COALESCE(v.starts, 0) AS starts, v.avg_duration_laps, COALESCE(v.races_affected, 0) AS races_affected
+    FROM exposure e
+    CROSS JOIN statuses s
+    LEFT JOIN events v ON e.circuit_key = v.circuit_key AND s.track_status = v.track_status
+),
+global_rate AS (
+    SELECT track_status, SUM(starts) * 1.0 / NULLIF(SUM(laps), 0) AS global_hazard_per_lap
+    FROM circuit_status GROUP BY track_status
+),
+horizons AS (
+    SELECT 5 AS laps_remaining UNION ALL SELECT 10 UNION ALL SELECT 20 UNION ALL SELECT 30
+    UNION ALL SELECT 40 UNION ALL SELECT 50 UNION ALL SELECT 60
+),
+rates AS (
+    SELECT
+        c.*, g.global_hazard_per_lap,
+        c.starts * 1.0 / NULLIF(c.laps, 0) AS raw_hazard_per_lap,
+        (c.starts + {{ var('sc_prior_laps') }} * g.global_hazard_per_lap) / (c.laps + {{ var('sc_prior_laps') }}) AS shrunk_hazard_per_lap
+    FROM circuit_status c
+    JOIN global_rate g ON c.track_status = g.track_status
+)
+SELECT
+    r.circuit_key, r.track_status, h.laps_remaining,
+    r.races AS races_observed, r.laps AS race_laps_observed, r.starts AS starts_observed,
+    r.races_affected, r.avg_duration_laps,
+    r.raw_hazard_per_lap, r.global_hazard_per_lap, r.shrunk_hazard_per_lap,
+    1 - POWER(1 - r.shrunk_hazard_per_lap, h.laps_remaining) AS p_at_least_one_start,
+    (r.races < 3) AS low_sample
+FROM rates r
+CROSS JOIN horizons h
+```
+
+> **Be honest about what this is.** Per-circuit estimates rest on a handful of races, so treat `low_sample = true` rows as weak. The constant-hazard assumption ignores lap-1 incidents, weather and late-race effects, and red flags are not modelled. It is a defensible baseline, not a forecast.
+
+#### **Task 7: The Strategy Simulator (Python)**
+
+New in the second edition. SQL answered *what happened*; the simulator answers *what if*: given measured tyre pace, pit loss and safety-car risk, which strategy is expected to finish fastest? It lives in **analytics/f1_strategy/** and reads the three tables above.
+
+**Step 1: The data classes.** A strategy is a sequence of (compound, laps) stints; the race context holds the assumptions.
+
+```python
+from dataclasses import dataclass, field
+from typing import Dict, Tuple
+import numpy as np
+
+
+@dataclass(frozen=True)
+class CompoundModel:
+    fresh_pace: float      # fuel-corrected lap time (s) on a new tyre
+    degradation: float     # seconds lost per lap of tyre age (>= 0)
+
+
+@dataclass(frozen=True)
+class RaceContext:
+    total_laps: int
+    fuel_effect: float = 0.035            # s per lap of fuel still on board (ASSUMPTION, see dbt var)
+    pit_loss: float = 22.0                # green-flag time lost by a stop (s)
+    neutralised_pit_discount: float = 0.5  # fraction of pit_loss saved when the stop is made under SC
+    sc_hazard_per_lap: float = 0.0        # chance a Safety Car starts on any lap (when none is out)
+    sc_duration_laps: float = 3.0         # mean SC length in laps
+    sc_lap_time_factor: float = 1.45      # SC lap time relative to the fastest fresh-tyre pace
+    noise_sd: float = 0.25                # lap-to-lap random variation (s), independent per lap
+    start_penalty: float = 0.0            # fixed time added to every strategy (grid / lap-1 effects)
+
+
+@dataclass(frozen=True)
+class Strategy:
+    stints: Tuple[Tuple[str, int], ...]   # ((compound, laps_in_stint), ...) summing to total_laps
+
+    @property
+    def stops(self) -> int:
+        return len(self.stints) - 1
+
+    @property
+    def pit_laps(self):
+        out, lap = [], 0
+        for _, n in self.stints[:-1]:
+            lap += n
+            out.append(lap)               # in-lap number (1-based)
+        return out
+
+    def label(self) -> str:
+        return " > ".join(f"{c}({n})" for c, n in self.stints)
+
+
+@dataclass
+class SimResult:
+    strategies: list
+    totals: np.ndarray                    # shape (n_strategies, n_sims), seconds
+    sc_mask: np.ndarray                   # shape (n_sims, laps), shared by all strategies (paired comparison)
+
+    def summary(self):
+        best = self.totals.argmin(axis=0)
+        rows = []
+        for i, s in enumerate(self.strategies):
+            t = self.totals[i]
+            rows.append({
+                "strategy": s.label(), "stops": s.stops,
+                "mean_s": float(t.mean()), "median_s": float(np.median(t)),
+                "p10_s": float(np.percentile(t, 10)), "p90_s": float(np.percentile(t, 90)),
+                "p_best": float((best == i).mean()),
+            })
+        return sorted(rows, key=lambda r: r["mean_s"])
+```
+
+**Step 2: Simulate.** Lap time is `fresh pace + degradation x tyre age + fuel effect x laps of fuel left`, plus random noise. A safety car is sampled lap by lap (a new one can only start when none is out), makes laps slow, and makes a stop cheaper. **All strategies are evaluated against the same safety-car draws and the same noise** (common random numbers), so a difference between two strategies is the strategies.
+
+```python
+from typing import Dict, Sequence
+import numpy as np
+from .model import CompoundModel, RaceContext, Strategy, SimResult
+
+
+def clean_lap_times(ctx: RaceContext, models: Dict[str, CompoundModel], strategy: Strategy) -> np.ndarray:
+    """Deterministic (no noise, no SC) lap times for one strategy: fresh pace + degradation x tyre age + fuel effect."""
+    if sum(n for _, n in strategy.stints) != ctx.total_laps:
+        raise ValueError(f"stints sum to {sum(n for _, n in strategy.stints)} laps, race has {ctx.total_laps}")
+    laps = []
+    lap_no = 0
+    for compound, n in strategy.stints:
+        m = models[compound]
+        for age in range(n):
+            lap_no += 1
+            laps.append(m.fresh_pace + m.degradation * age + ctx.fuel_effect * (ctx.total_laps - lap_no))
+    return np.asarray(laps, dtype=float)
+
+
+def sample_sc_mask(rng: np.random.Generator, n_sims: int, laps: int, hazard: float, mean_duration: float) -> np.ndarray:
+    """(n_sims, laps) boolean: True where a Safety Car is out. A new SC can only start when none is out."""
+    mask = np.zeros((n_sims, laps), dtype=bool)
+    if hazard <= 0:
+        return mask
+    remaining = np.zeros(n_sims, dtype=int)
+    for lap in range(laps):
+        start = (remaining == 0) & (rng.random(n_sims) < hazard)
+        durations = 1 + rng.poisson(max(mean_duration - 1.0, 0.0), size=n_sims)
+        remaining = np.where(start, durations, remaining)
+        mask[:, lap] = remaining > 0
+        remaining = np.maximum(remaining - 1, 0)
+    return mask
+
+
+def evaluate(ctx: RaceContext, models: Dict[str, CompoundModel], strategies: Sequence[Strategy],
+             n_sims: int = 4000, seed: int = 0, sc_mask: np.ndarray = None) -> SimResult:
+    """Monte Carlo total race time for every strategy. All strategies share the SAME safety-car draws and lap noise
+    (common random numbers), so differences between strategies are not sampling luck. Pass sc_mask to force scenarios."""
+    rng = np.random.default_rng(seed)
+    if sc_mask is None:
+        sc_mask = sample_sc_mask(rng, n_sims, ctx.total_laps, ctx.sc_hazard_per_lap, ctx.sc_duration_laps)
+    else:
+        n_sims = sc_mask.shape[0]
+    noise = rng.normal(0.0, ctx.noise_sd, size=(n_sims, ctx.total_laps)) if ctx.noise_sd > 0 else np.zeros((n_sims, ctx.total_laps))
+    fastest_fresh = min(m.fresh_pace for m in models.values())
+    sc_time = ctx.sc_lap_time_factor * fastest_fresh
+    totals = np.empty((len(strategies), n_sims))
+    for i, s in enumerate(strategies):
+        base = clean_lap_times(ctx, models, s)
+        lap_times = np.where(sc_mask, sc_time, base[None, :] + noise)
+        total = lap_times.sum(axis=1) + ctx.start_penalty
+        for pit_lap in s.pit_laps:
+            discount = np.where(sc_mask[:, pit_lap - 1], ctx.neutralised_pit_discount, 0.0)
+            total = total + ctx.pit_loss * (1.0 - discount)
+        totals[i] = total
+    return SimResult(list(strategies), totals, sc_mask)
+```
+
+**Step 3: Enumerate and rank strategies.** The optimiser generates every strategy with up to two stops on a grid of pit laps and applies the dry-race rule that two different dry compounds must be used.
+
+```python
+import itertools
+from typing import Dict, List, Sequence
+from .model import CompoundModel, RaceContext, Strategy
+from .simulate import evaluate
+
+DRY = {"SOFT", "MEDIUM", "HARD"}
+
+
+def enumerate_strategies(total_laps: int, compounds: Sequence[str], max_stops: int = 2, pit_step: int = 1,
+                         min_stint: int = 5, require_two_dry_compounds: bool = True) -> List[Strategy]:
+    """All strategies with 0..max_stops stops, stint lengths >= min_stint, pit laps on a grid of pit_step laps.
+    Regulation modelled: a dry race must use at least two different dry compounds."""
+    out = []
+    for stops in range(0, max_stops + 1):
+        stints_n = stops + 1
+        cut_range = range(min_stint, total_laps - min_stint + 1, pit_step)
+        for cuts in itertools.combinations(cut_range, stops):
+            bounds = [0, *cuts, total_laps]
+            lengths = [bounds[i + 1] - bounds[i] for i in range(stints_n)]
+            if any(l < min_stint for l in lengths):
+                continue
+            for seq in itertools.product(compounds, repeat=stints_n):
+                if require_two_dry_compounds and len({c for c in seq if c in DRY}) < 2:
+                    continue
+                out.append(Strategy(tuple(zip(seq, lengths))))
+    return out
+
+
+def rank_strategies(ctx: RaceContext, models: Dict[str, CompoundModel], strategies: Sequence[Strategy],
+                    n_sims: int = 2000, seed: int = 0, top: int = 10):
+    res = evaluate(ctx, models, strategies, n_sims=n_sims, seed=seed)
+    return res.summary()[:top]
+```
+
+**Step 4: Feed it from the warehouse.** `load_inputs` reads the three tables, takes the driver's own pace where it exists and the median of all drivers otherwise, clips a negative degradation to zero, and **records every value that was a fallback instead of a measurement** so you can see what the answer rests on.
+
+```python
+"""Build simulator inputs from the dbt marts. Every value that is a FALLBACK (not measured) is recorded in provenance."""
+from statistics import median
+from .model import CompoundModel, RaceContext
+
+
+def load_inputs(con, session_key: int, driver_number: int = None, total_laps: int = None, overrides: dict = None):
+    prov, overrides = {}, overrides or {}
+    sess = con.execute("SELECT circuit_key FROM dim_sessions WHERE session_key = ?", [session_key]).fetchone()
+    if sess is None:
+        raise ValueError(f"session {session_key} not found in dim_sessions")
+    circuit = sess[0]
+
+    if total_laps is None:
+        row = con.execute("SELECT MAX(lap_number) FROM int_lap_context WHERE session_key = ?", [session_key]).fetchone()
+        total_laps = int(row[0]) if row and row[0] else None
+        prov["total_laps"] = "measured: max lap in session" if total_laps else "MISSING"
+    if not total_laps:
+        raise ValueError("total_laps could not be determined; pass total_laps explicitly")
+
+    rows = con.execute(
+        "SELECT driver_number, tyre_compound, fresh_tyre_pace_seconds, degradation_seconds_per_lap, clean_laps "
+        "FROM fct_compound_pace_model WHERE session_key = ? AND fresh_tyre_pace_seconds IS NOT NULL "
+        "AND degradation_seconds_per_lap IS NOT NULL", [session_key]).fetchall()
+    models, by_compound = {}, {}
+    for d, comp, pace, deg, n in rows:
+        by_compound.setdefault(comp, []).append((d, pace, deg, n))
+    for comp, items in by_compound.items():
+        mine = [i for i in items if driver_number is not None and i[0] == driver_number]
+        use, how = (mine, f"driver {driver_number}") if mine else (items, f"median of {len(items)} driver(s)")
+        pace = median(i[1] for i in use); deg = median(i[2] for i in use)
+        if deg < 0:
+            prov[f"{comp}.degradation"] = f"clipped from {deg:.4f} to 0 (negative slope = noise or track evolution)"
+            deg = 0.0
+        models[comp] = CompoundModel(float(pace), float(deg))
+        prov.setdefault(f"{comp}.model", f"measured: {how}")
+
+    pl = con.execute("SELECT median_green_time_lost_seconds, median_green_pit_lane_time_seconds, neutralisation_discount_ratio "
+                     "FROM fct_pit_loss_by_circuit WHERE circuit_key = ?", [circuit]).fetchone()
+    pit_loss = pl[0] if pl and pl[0] is not None else (pl[1] if pl and pl[1] is not None else None)
+    prov["pit_loss"] = "measured: circuit median" if pit_loss is not None else "FALLBACK default 22.0 s"
+    discount = pl[2] if pl and pl[2] is not None else None
+    prov["neutralised_pit_discount"] = "measured" if discount is not None else "FALLBACK default 0.5 (no neutralised stops observed)"
+
+    sc = con.execute("SELECT shrunk_hazard_per_lap, avg_duration_laps, low_sample FROM fct_safety_car_hazard "
+                     "WHERE circuit_key = ? AND track_status = 'SC' AND laps_remaining = 5", [circuit]).fetchone()
+    hazard = sc[0] if sc and sc[0] is not None else 0.0
+    duration = sc[1] if sc and sc[1] is not None else 3.0
+    prov["sc_hazard"] = ("measured, LOW SAMPLE (shrunk toward all-circuit rate)" if sc and sc[2] else "measured") if sc else "FALLBACK 0 (no data)"
+    prov["sc_duration"] = "measured" if sc and sc[1] is not None else "FALLBACK 3.0 laps"
+
+    ctx = RaceContext(
+        total_laps=total_laps,
+        pit_loss=float(overrides.get("pit_loss", pit_loss if pit_loss is not None else 22.0)),
+        neutralised_pit_discount=float(overrides.get("neutralised_pit_discount", discount if discount is not None else 0.5)),
+        sc_hazard_per_lap=float(overrides.get("sc_hazard_per_lap", hazard)),
+        sc_duration_laps=float(overrides.get("sc_duration_laps", duration)),
+        **{k: v for k, v in overrides.items() if k in ("fuel_effect", "sc_lap_time_factor", "noise_sd", "start_penalty")},
+    )
+    return ctx, models, prov
+```
+
+**Step 5: Run it.**
+
+```bash
+PYTHONPATH=analytics python -m f1_strategy.cli --db f1_local_warehouse.duckdb --session <a REAL session key> --driver 1
+```
+
+Use a session key from **your own** warehouse (`SELECT session_key, year, location FROM dim_sessions WHERE session_type = 'Race'`). If you pass one that does not exist, the error now lists your most recent race sessions.
+
+**How it was tested.** The tests compare the simulator with answers computed *independently of it*: a total race time worked out by hand, a fuel-effect sum written out longhand, and a **brute-force search** over every one-stop strategy that the optimiser must agree with. They also check properties that must hold whatever the numbers are: more safety-car risk raises expected race time; higher degradation moves the best stop earlier; the same seed gives the same answer.
+
+```python
+def test_total_time_matches_hand_calculation():
+    ctx = det_ctx(pit_loss=20.0, fuel_effect=0.0)
+    s = Strategy((("MEDIUM", 10), ("HARD", 20)))
+    expected = sum(89.6 + 0.06 * a for a in range(10)) + sum(90.2 + 0.03 * a for a in range(20)) + 20.0
+    got = evaluate(ctx, MODELS, [s], n_sims=3).totals[0]
+    assert np.allclose(got, expected)
+```
+
+> **What this tells you, and what it does not.** The tests show the simulator computes what it says it computes. They say **nothing** about whether it predicts real races. It ignores traffic, tyre cliffs, track evolution and how rivals react, and it has not been compared with real results. Use it to *compare* strategies under stated assumptions, never to predict an outcome.
+
+#### **Task 8: Team Radio Messages**
+
+New in the second edition, and **opt-in**: it needs `faster-whisper` and outbound HTTPS to the recording host. The audio recordings are listed by the `team_radio` endpoint; this task turns them into text you can search.
+
+**Step 1: Transcribe.** `modules/radio_transcriber.py` downloads each clip, transcribes it with a model running on your own CPU, and writes `radio_transcripts_<session>_extracted.parquet`. Clips already done are skipped, and a clip that fails is recorded with its error instead of failing the session.
+
+```python
+"""
+Speech-to-text for team radio. OPT-IN and self-hosted (faster-whisper on CPU), in keeping with the rest of the project.
+
+  raw_dir/team_radio_<session>_extracted.parquet        <- written by the extractor (metadata + recording_url)
+  raw_dir/radio_transcripts_<session>_extracted.parquet <- written here
+
+The transcripts file deliberately does NOT start with "team_radio_": that prefix is the glob of the team_radio source,
+and a transcript file matching it would be mixed into the radio metadata table.
+
+Needs `faster-whisper` (add it to AIRFLOW_EXTRA_PIP) and outbound HTTPS to the recording host. Clips already transcribed
+are skipped, so re-runs only process new radio. A clip that fails to download or decode is recorded with its error
+instead of failing the session. Transcription quality on noisy radio audio is imperfect and is NOT validated here.
+"""
+import logging
+import os
+import tempfile
+from datetime import datetime, timezone
+
+import pyarrow as pa
+import pyarrow.parquet as pq
+
+COLUMNS = ["session_key", "meeting_key", "driver_number", "date", "recording_url", "transcript", "language",
+           "audio_duration_seconds", "model", "error", "_transcribed_at_utc"]
+
+
+def default_download(url: str, dest: str) -> str:
+    import requests
+    with requests.get(url, timeout=60, stream=True) as r:
+        r.raise_for_status()
+        with open(dest, "wb") as fh:
+            for chunk in r.iter_content(1 << 16):
+                fh.write(chunk)
+    return dest
+
+
+def load_model(model_name: str = "small.en"):
+    try:
+        from faster_whisper import WhisperModel
+    except ImportError as exc:
+        raise RuntimeError("faster-whisper is not installed; add it to AIRFLOW_EXTRA_PIP to enable radio transcription") from exc
+    return WhisperModel(model_name, device="cpu", compute_type="int8")
+
+
+def _read(path):
+    return pq.read_table(path).to_pylist() if os.path.exists(path) else []
+
+
+def transcribe_session(session_key, raw_dir: str, model=None, download=None, model_name: str = "small.en", limit: int = None):
+    """Transcribe all not-yet-transcribed radio clips of one session. Returns the transcripts file path, or None when
+    the session has no radio metadata."""
+    src = os.path.join(raw_dir, f"team_radio_{session_key}_extracted.parquet")
+    out = os.path.join(raw_dir, f"radio_transcripts_{session_key}_extracted.parquet")
+    clips = _read(src)
+    if not clips:
+        logging.info(f"No team radio metadata for session {session_key}; nothing to transcribe.")
+        return None
+
+    done_rows = _read(out)
+    done = {r["recording_url"] for r in done_rows if r.get("recording_url")}
+    todo = [c for c in clips if c.get("recording_url") and c["recording_url"] not in done]
+    if limit:
+        todo = todo[:limit]
+    if not todo:
+        logging.info(f"Session {session_key}: all {len(clips)} clips already transcribed.")
+        return out
+
+    model = model or load_model(model_name)
+    download = download or default_download
+    new_rows = []
+    for clip in todo:
+        row = {"session_key": clip.get("session_key"), "meeting_key": clip.get("meeting_key"),
+               "driver_number": clip.get("driver_number"), "date": clip.get("date"), "recording_url": clip["recording_url"],
+               "transcript": None, "language": None, "audio_duration_seconds": None, "model": model_name, "error": None,
+               "_transcribed_at_utc": datetime.now(timezone.utc).isoformat(timespec="seconds")}
+        tmp = None
+        try:
+            fd, tmp = tempfile.mkstemp(suffix=".mp3"); os.close(fd)
+            download(clip["recording_url"], tmp)
+            segments, info = model.transcribe(tmp, language="en", vad_filter=True)
+            row["transcript"] = " ".join(s.text.strip() for s in segments).strip()
+            row["language"] = getattr(info, "language", None)
+            row["audio_duration_seconds"] = getattr(info, "duration", None)
+        except Exception as exc:  # one bad clip must not lose the rest of the session
+            logging.warning(f"Transcription failed for {clip['recording_url']}: {exc}")
+            row["error"] = str(exc)[:300]
+        finally:
+            if tmp and os.path.exists(tmp):
+                os.remove(tmp)
+        new_rows.append(row)
+
+    all_rows = [{k: r.get(k) for k in COLUMNS} for r in done_rows + new_rows]
+    tmp_out = out + ".tmp"
+    pq.write_table(pa.Table.from_pylist(all_rows), tmp_out, compression="snappy")
+    os.replace(tmp_out, out)
+    logging.info(f"Session {session_key}: transcribed {len(new_rows)} new clip(s), {sum(1 for r in new_rows if r['error'])} failed.")
+    return out
+```
+
+> **Why the file is not called `team_radio_transcripts_...`.** The `team_radio` source reads `team_radio_*_extracted.parquet`. A transcript file with that prefix would match the pattern and be silently mixed into the radio *metadata* table. The prefix `radio_transcripts_` cannot collide.
+
+**Step 2: Turn it on.** In the DAG trigger form tick `transcribe_radio` (`faster-whisper` is already in `requirements.txt` and baked into the image by the Dockerfile, so there is nothing to add to `.env`), and tell dbt the files exist:
+
+```bash
+dbt build --select +fct_radio_messages --vars '{enable_radio_transcripts: true}'
+```
+
+**Step 3: Model it.** `fct_radio_messages` attaches the lap, tyre, track status and position at the moment of each message (an ASOF join) and adds **keyword tags**:
+
+```sql
+{#
+  Transcribed team radio with race context (lap, tyre, track status, position) and KEYWORD tags.
+  The tags are plain substring heuristics on the transcript, NOT a language model: they will miss paraphrases and can
+  fire on unrelated words. Treat them as a way to find messages to read, not as ground truth. Transcript text itself
+  comes from speech-to-text on noisy radio audio and can be wrong. Empty unless var enable_radio_transcripts is true.
+#}
+WITH msgs AS (
+    SELECT
+        session_key, meeting_key, driver_number, radio_timestamp, recording_url,
+        transcript, language, audio_duration_seconds, transcription_error,
+        LOWER(COALESCE(transcript, '')) AS t
+    FROM {{ ref('stg_radio_transcripts') }}
+),
+with_context AS (
+    {{ f1_asof_join(
+        left='msgs', right=ref('int_lap_context'),
+        on=['session_key', 'driver_number'], left_ts='radio_timestamp', right_ts='lap_start_ts',
+        left_cols=['session_key', 'meeting_key', 'driver_number', 'radio_timestamp', 'recording_url', 'transcript',
+                   'language', 'audio_duration_seconds', 'transcription_error', 't'],
+        right_cols=['lap_number', 'tyre_compound', 'tyre_age_this_lap', 'track_status', 'position_start']
+    ) }}
+)
+SELECT
+    c.session_key, c.meeting_key, c.driver_number,
+    d.full_name AS driver_name, d.team_name,
+    c.radio_timestamp, c.recording_url, c.transcript, c.language, c.audio_duration_seconds, c.transcription_error,
+    c.lap_number, c.tyre_compound, c.tyre_age_this_lap, c.track_status, c.position_start,
+    (c.t LIKE '%box%' OR c.t LIKE '%pit this lap%' OR c.t LIKE '%pit now%' OR c.t LIKE '%come in%') AS mentions_pit_call,
+    (c.t LIKE '%tyre%' OR c.t LIKE '%tire%' OR c.t LIKE '%grain%' OR c.t LIKE '%degrad%' OR c.t LIKE '%blister%') AS mentions_tyres,
+    (c.t LIKE '%safety car%' OR c.t LIKE '%virtual%' OR c.t LIKE '%vsc%' OR c.t LIKE '%red flag%' OR c.t LIKE '%yellow%') AS mentions_neutralisation,
+    (c.t LIKE '%drs%') AS mentions_drs,
+    (c.t LIKE '%penalt%' OR c.t LIKE '%investigat%' OR c.t LIKE '%stewards%') AS mentions_penalty,
+    (c.t LIKE '%fuel%' OR c.t LIKE '%lift and coast%' OR c.t LIKE '%engine%' OR c.t LIKE '%battery%' OR c.t LIKE '%deploy%') AS mentions_power_unit
+FROM with_context c
+LEFT JOIN {{ ref('dim_driver_session') }} d
+    ON c.session_key = d.session_key AND c.driver_number = d.driver_number
+```
+
+> **Treat the tags as a search aid.** They are plain substring matches on speech-to-text output of noisy radio audio: they miss paraphrases and can fire on unrelated words, and the transcript itself can be wrong. The transcriber's logic is unit-tested with a fake model; **real transcription has not been run**, so the quality on real radio is unknown.
 
 ### **Learner Pitfalls & Troubleshooting**
 
@@ -2847,6 +4967,26 @@ Open the **lineage graph** (the blue circle, bottom right): it shows every sourc
 * **Why it Happens:** the model used a hard-coded table name instead of `ref()`.
 * **The Solution:** always `{{ ref('model_name') }}`; check the lineage graph for orphans.
 
+* **The Problem (second edition, hit on the author's real data):** `dbt build` reports **13,934 failures** for `unique_combination_of_columns` on `int_lap_context` (`session_key`, `driver_number`, `lap_number`).
+* **Why it Happens:** a **fan-out**. OpenF1 can record the pit lap as *both* the last lap of one stint and the first lap of the next, so the join `lap_number BETWEEN lap_start AND lap_end` matches that lap to two stints and returns it twice. The first edition's model silently assumed stints never overlap, and the synthetic test data contained no overlap, so its own tests could not catch it. A duplicated lap is worse than an error: it would have double-counted that lap in every average downstream.
+* **The Solution:** keep exactly one stint per lap. `int_lap_context` ranks the matching stints with `QUALIFY ROW_NUMBER() OVER (PARTITION BY session_key, driver_number, lap_number ORDER BY stint_number DESC) = 1`, which keeps the **later** stint, so a shared pit lap is attributed to the stint that *starts* there. Know what that implies: that lap carries the new tyre's compound, so compare `compound_before` with `compound_after` in `fct_pit_stops` on your own data. Neither choice has been checked against real tyre data, and the synthetic fixtures contain no overlapping stint, so the grain test running on real data is what protects this fix.
+
+* **The Problem (second edition, hit on the author's real data):** `assert_pit_lane_time_plausible` reports **13,022 warnings**.
+* **Why it Happens:** in practice and qualifying OpenF1 reports every garage visit as a pit stop. On the author's real data the median pit-lane time was 340 s in practice and 260 s in qualifying, against 23.5 s for 2,568 race stops. Those rows flooded the test and the circuit pit-loss medians that the strategy simulator reads.
+* **The Solution:** `fct_pit_stops` now keeps **Race and Sprint** stops only. Two new tests guard that (`assert_pit_stops_only_in_races` and `assert_circuit_pit_loss_is_plausible`), and `assert_pit_lane_time_plausible` stays a warn-level review of long race stops (red flags, stuck cars), with its 10 to 120 second window written in the test.
+
+* **The Problem (second edition):** `dbt build --select int_lap_context+` fails with `Catalog Error: Table with name int_track_status_periods does not exist!`.
+* **Why it Happens:** `int_lap_context+` selects the model and what is *downstream* of it, not what it depends on. On a warehouse that never built `int_track_status_periods` the spine has nothing to join. (An earlier version of this book's checklist gave exactly that command, which is how it was found.)
+* **The Solution:** `dbt build --select +int_lap_context+`, or simply build everything the first time.
+
+* **The Problem (second edition):** the first real-data build stops partway, with two *tests* reported as failures (59 and 23 rows) and every downstream model skipped.
+* **Why it Happens:** `assert_lap_start_times_increase` and `assert_stint_ranges_valid` check the **source** data, and real OpenF1 data really does contain such rows. As errors, they block `dbt build` from running anything downstream of them.
+* **The Solution:** `stg_laps` removes duplicate and out-of-order laps and `stg_stints` removes impossible stints, so the two tests pass on real data and stay errors. The cleaning sits in staging because, as errors, those rows would otherwise stop `dbt build`.
+
+* **The Problem (second edition):** `python -m f1_strategy.cli --session 9002` says the session was not found, or `Need >= 2 compounds with a fitted pace model`.
+* **Why it Happens:** `9002` is a session key from the **synthetic** dataset, and an earlier version of this book told you to use it against your real warehouse. Separately, a real race needs enough clean laps on at least two compounds for the pace model to fit.
+* **The Solution:** use a real `session_key` from `dim_sessions`; the error message now lists recent race sessions. If only one compound has enough laps, lower `min_stint_laps_for_degradation` for the experiment.
+
 ---
 
 
@@ -2857,7 +4997,8 @@ Open the **lineage graph** (the blue circle, bottom right): it shows every sourc
 Everything so far handles thousands or millions of rows. **Telemetry** (`car_data` and `location`) samples every car several times per second for an entire race: **tens of millions of rows**. Naive SQL that works on laps will exhaust an 8 GB machine. This chapter is the project's best case study in **memory-aware data engineering**, told as the sequence of failures that produced the final design.
 
 * The incident chain and the streaming export: **[VERIFIED]** (the logs show the failures, and later successful exports of about 21 and 43 minutes).
-* The final incremental ASOF model and variable-gated macro below: **[CODE FINAL, RUN NOT CONFIRMED]**. Review them against your own runs.
+* The incremental ASOF model: **[VERIFIED]** on real data. A full first build over the author's whole dataset **took 1 hour 25 minutes** (single thread, spilling to disk); Task 3 shows how to build only the sessions you need instead.
+* The distance axis, the delta trace and the derived corners (Tasks 6 to 8, new in the second edition): **[VERIFIED ON SYNTHETIC DATA]**. The delta trace and the two corner models also built on the author's real data in seconds each, but **whether the detected corners are good on real circuits has not been reviewed**.
 
 **Concepts introduced in this chapter**
 
@@ -2868,6 +5009,10 @@ Everything so far handles thousands or millions of rows. **Telemetry** (`car_dat
 * **Incremental model:** after the first build, each run processes only new data.
 * **Partitioned Parquet:** one folder per value of chosen columns (`meeting_key=.../session_key=.../driver_number=.../`). Queries that filter on those columns read only the matching folders (**partition pruning**).
 * **Macro:** a reusable Jinja function in `macros/`. It can run SQL that is not a model, such as a `COPY` export.
+* **Distance axis:** telemetry is recorded against *time*. To compare two laps you need it against *distance along the lap*, so that "300 m into the lap" means the same place for both drivers.
+* **Normalisation:** rescaling a measurement to a common reference. Here, every complete lap is rescaled to the same track length, because integrating speed over time drifts a little every lap.
+* **Apex:** the slowest point of a corner. The API gives no corner data, so Task 8 *detects* corners as speed minima.
+* **Opt-in session build:** telemetry built only for chosen sessions (`telemetry_only_sessions`), so a failure loses one small build instead of the whole run.
 
 ### **Prerequisites**
 
@@ -2901,7 +5046,7 @@ Each step below is a real error from the build, in order. Do not skip them: ever
 
 1. **Separate modelling from exporting.** dbt builds models; DuckDB's native `COPY` is the best tool for writing files.
 2. **Do not stack blocking operators** over large inputs.
-3. **Give the engine somewhere to spill** (`temp_directory`) and make sure that folder exists.
+3. **Give the engine somewhere to spill.** DuckDB's default location works; if you set `temp_directory`, make sure that folder exists.
 4. **Pick the join that matches the data's shape.** Time series want ASOF.
 
 #### **Task 3: Build the Telemetry Model**
@@ -2909,61 +5054,81 @@ Each step below is a real error from the build, in order. Do not skip them: ever
 Create **models/marts/analytics/fct_telemetry.sql**.
 
 ```sql
+{#
+  High-frequency car telemetry joined to position and lap number.
+  * ASOF joins: "latest location reading at or before this telemetry sample" (the two feeds are not
+    timestamp-aligned, so an equality join silently drops almost every row).
+  * location_age_ms exposes how stale the matched position is; positions older than 2 s are set to NULL.
+  * INCREMENTAL by session: a session already present is skipped. To re-load a session whose raw files were
+    re-extracted:  dbt run-operation delete_sessions_from_incrementals --args '{sessions: [9158]}'  then dbt run.
+#}
 {{ config(
-    materialized = 'incremental',
-    unique_key = ['session_key', 'driver_number', 'telemetry_timestamp']
+    materialized='incremental',
+    incremental_strategy=var('bq_incremental_strategy', 'insert_overwrite') if target.type == 'bigquery' else 'append',
+    unique_key=['session_key', 'driver_number', 'telemetry_timestamp'] if (target.type == 'bigquery' and var('bq_incremental_strategy', 'insert_overwrite') == 'merge') else none,
+    partition_by=({'field': 'session_key', 'data_type': 'int64',
+                   'range': {'start': var('bq_session_key_start'), 'end': var('bq_session_key_end'), 'interval': 1}}
+                  if target.type == 'bigquery' else none)
 ) }}
 
+{# Optional: --vars '{telemetry_only_sessions: [9158]}' builds telemetry for just those sessions. The downstream telemetry marts
+   (lap summary, distance trace, corners, delta trace) only see what is in this table, so they follow automatically. #}
 WITH car_data AS (
     SELECT * FROM {{ ref('stg_car_data') }}
-    ORDER BY session_key, driver_number, telemetry_timestamp
+    WHERE 1 = 1
+    {% if var('telemetry_only_sessions', []) | length > 0 %}
+      AND session_key IN ({{ var('telemetry_only_sessions') | join(', ') }})
+    {% endif %}
+    {% if is_incremental() %}
+      AND session_key NOT IN (SELECT DISTINCT session_key FROM {{ this }})
+    {% endif %}
+)
+, with_location AS (
+    {{ f1_asof_join(left='car_data', right=ref('stg_location'), on=['session_key', 'driver_number'], left_ts='telemetry_timestamp', right_ts='location_timestamp',
+        left_cols=['session_key', 'meeting_key', 'driver_number', 'telemetry_timestamp', 'rpm', 'speed', 'gear', 'throttle', 'brake', 'drs'],
+        right_cols=['location_timestamp', 'x_coordinate', 'y_coordinate', 'z_coordinate']) }}
 ),
-location_data AS (
-    SELECT * FROM {{ ref('stg_location') }}
-    ORDER BY session_key, driver_number, location_timestamp
+with_lap AS (
+    {{ f1_asof_join(left='with_location', right=ref('stg_laps'), on=['session_key', 'driver_number'], left_ts='telemetry_timestamp', right_ts='date_start',
+        left_cols=['session_key', 'meeting_key', 'driver_number', 'telemetry_timestamp', 'rpm', 'speed', 'gear', 'throttle', 'brake', 'drs',
+                   'location_timestamp', 'x_coordinate', 'y_coordinate', 'z_coordinate'],
+        right_cols=['lap_number', 'date_start AS lap_date_start', 'lap_duration']) }}
 )
-SELECT
-    c.session_key,
-    c.meeting_key,
-    c.driver_number,
-    c.telemetry_timestamp,
-    
-    -- Performance Metrics
-    c.rpm, 
-    c.speed, 
-    c.gear, 
-    c.throttle, 
-    c.brake, 
-    c.drs,
-    
-    -- Track Position (mapped to nearest preceding timestamp)
-    l.x_coordinate AS x,
-    l.y_coordinate AS y,
-    l.z_coordinate AS z
-    
-FROM car_data c
-ASOF LEFT JOIN location_data l
-    ON c.session_key = l.session_key
-    AND c.driver_number = l.driver_number
-    AND c.telemetry_timestamp >= l.location_timestamp
 
-{% if is_incremental() %}
--- Defensive incremental logic using NOT EXISTS to avoid the NOT IN NULL trap.
--- Ensures safe appending without relying on external variables.
-WHERE NOT EXISTS (
-    SELECT 1 
-    FROM {{ this }} t 
-    WHERE t.session_key = c.session_key
-)
-{% endif %}
+{# A sample belongs to a lap only while that lap is running. The as-of join above finds the latest lap that STARTED before the sample, with
+   no upper bound, so cool-down laps after the flag and garage time in practice/qualifying used to be credited to the previous lap
+   (real data: the final lap of a race held minutes of slow driving). The window ends at lap_start + lap_duration (+ a small tolerance);
+   laps without a duration get var telemetry_max_unknown_lap_seconds. Samples outside any lap keep lap_number NULL. #}
+SELECT
+    session_key, meeting_key, driver_number, telemetry_timestamp,
+    CASE WHEN {{ f1_epoch_ms('telemetry_timestamp') }} - {{ f1_epoch_ms('lap_date_start') }}
+              <= 1000 * (COALESCE(lap_duration, {{ var('telemetry_max_unknown_lap_seconds', 200) }}) + {{ var('telemetry_lap_tolerance_seconds', 2) }})
+         THEN lap_number END AS lap_number,
+    rpm, speed, gear, throttle, brake, drs,
+    CASE WHEN {{ f1_epoch_ms('telemetry_timestamp') }} - {{ f1_epoch_ms('location_timestamp') }} <= 2000 THEN x_coordinate END AS x,
+    CASE WHEN {{ f1_epoch_ms('telemetry_timestamp') }} - {{ f1_epoch_ms('location_timestamp') }} <= 2000 THEN y_coordinate END AS y,
+    CASE WHEN {{ f1_epoch_ms('telemetry_timestamp') }} - {{ f1_epoch_ms('location_timestamp') }} <= 2000 THEN z_coordinate END AS z,
+    {{ f1_epoch_ms('telemetry_timestamp') }} - {{ f1_epoch_ms('location_timestamp') }} AS location_age_ms
+FROM with_lap
 ```
 
 **Reading it line by line**
 
-* **`incremental` and `unique_key`:** the first run builds the table; later runs only add rows. The key identifies one reading.
-* **`ASOF LEFT JOIN ... ON ... AND c.telemetry_timestamp >= l.location_timestamp`:** for each car-data row, find the latest location row for the same session and driver that is **not later** than the reading. The `>=` condition is what makes it an ASOF join.
-* **`{% if is_incremental() %} WHERE NOT EXISTS (...)`:** on subsequent runs, skip any session already present in the table. `NOT EXISTS` is used instead of `NOT IN` because `NOT IN` returns nothing at all if the subquery contains a `NULL`, a classic trap.
+* **The `config` block:** `incremental` means the first run builds the table and later runs only add rows. On DuckDB the strategy is `append`. BigQuery has no `append`, so there it is `insert_overwrite` with a table **partitioned by `session_key`, one session per partition** (Chapter 10). The partition layout is chosen so that overwriting a partition can only ever replace the session being loaded.
+* **`f1_asof_join(...)`:** for each car-data row, attach the latest location row for the same session and driver that is **not later** than the reading, then do the same for the lap. It is a macro because DuckDB has a native `ASOF JOIN` and BigQuery does not; Chapter 10 explains how it works on both. The `>=` in the original `ASOF` condition is what makes it "latest at or before".
+* **`session_key NOT IN (SELECT DISTINCT session_key FROM {{ this }})`:** on subsequent runs, skip any session already present. (The first edition used `NOT EXISTS`; `NOT IN` is fine here because `session_key` is never `NULL`.)
+* **`telemetry_only_sessions` (new):** an optional list of session keys. When set, only those sessions are loaded. Unset, every session with car data that is not yet in the table is loaded. See the box below.
+* **`location_age_ms`:** how stale the matched position is. A position older than two seconds is set to `NULL` instead of being trusted, because "latest known position" from 30 seconds ago is not a position.
 * **Column aliases (`x`, `y`, `z`):** location coordinates arrive from staging as `x_coordinate` and so on.
+* **`lap_number`:** the lap each reading belongs to, by an ASOF match to the latest lap start. Everything in Tasks 6 to 8 depends on it. A sample belongs to a lap only **while that lap is running**: from its start to start plus duration plus `telemetry_lap_tolerance_seconds`, and a lap with no duration gets `telemetry_max_unknown_lap_seconds`. Samples outside any lap keep a `NULL` lap number. Without that upper bound, cool-down laps and garage time were credited to the previous lap (the final lap of a race held minutes of slow driving, which produced 150 s delta traces and 93 km/h "top speeds"). The test `assert_telemetry_samples_within_lap_window` guards it.
+
+**Build only the sessions you need.** On the author's real data the first full build took **1 hour 25 minutes**. A job that long that fails at minute 84 loses everything, so the model accepts an opt-in list of sessions:
+
+```bash
+dbt build --select fct_telemetry+ --vars '{telemetry_only_sessions: [9158]}'
+```
+
+Only those sessions are loaded, and every telemetry mart downstream (lap summary, distance trace, corners, delta trace) follows automatically, because they read from this table. Run it again with other session keys to add more. Because the model is incremental it skips sessions already in the table, so after a change to the lap-window logic you must rebuild with `--full-refresh`.
 
 Build it:
 
@@ -2978,66 +5143,39 @@ To rebuild from scratch (for example after changing the logic), use `--full-refr
 Create **macros/export_fct_telemetry.sql**. It writes the table out as a partitioned Parquet data lake, only when you ask it to.
 
 ```jinja
+{#
+  Streams fct_telemetry to a Hive-partitioned Parquet lake (meeting_key/session_key/driver_number).
+  Opt-in and scoped, so a normal `dbt run` never triggers a long export:
+    dbt run-operation export_fct_telemetry --vars '{export_data: true}'                       # everything
+    dbt run-operation export_fct_telemetry --vars '{export_data: true, target_session_key: 9158}'
+    dbt run-operation export_fct_telemetry --vars '{export_data: true, target_meeting_key: 1219}'
+  Output folder: var telemetry_export_path (env F1_EXPORT_PATH). The partition folders are created by COPY, but
+  the PARENT of that path must already exist (COPY will not create missing parents):  mkdir -p output
+  Memory notes (see handbook Chapter 7): no global ORDER BY, preserve_insertion_order=false, capped open writers.
+#}
 {% macro export_fct_telemetry() %}
-
   {% if execute %}
-    
-    {# 1. Guardrail: Only run if explicitly told to export #}
-    {% set should_export = var('export_data', false) %}
-    
-    {% if should_export %}
-      
-      {# 2. Capture target parameters #}
-      {% set target_session = var('target_session_key', none) %}
-      {% set target_meeting = var('target_meeting_key', none) %}
+    {% if not var('export_data', false) %}
+      {% do log("export_fct_telemetry skipped: pass --vars '{export_data: true}' to run it.", info=True) %}
+    {% else %}
+      {% set path = var('telemetry_export_path') %}
+      {% set filters = [] %}
+      {% if var('target_session_key', none) is not none %}{% do filters.append("session_key = " ~ (var('target_session_key') | int)) %}{% endif %}
+      {% if var('target_meeting_key', none) is not none %}{% do filters.append("meeting_key = " ~ (var('target_meeting_key') | int)) %}{% endif %}
+      {% set where_clause = ("WHERE " ~ (filters | join(" AND "))) if filters else "" %}
 
-      {% do log("=======================================================================", info=True) %}
-      {% if target_session %}
-        {% do log("ATTENTION: Starting INCREMENTAL Parquet export for Session: " ~ target_session, info=True) %}
-      {% elif target_meeting %}
-        {% do log("ATTENTION: Starting INCREMENTAL Parquet export for Meeting: " ~ target_meeting, info=True) %}
-      {% else %}
-        {% do log("ATTENTION: Starting FULL historical Parquet export for fct_telemetry.", info=True) %}
-      {% endif %}
-      {% do log("PLEASE WAIT... Streaming data to local storage.", info=True) %}
-      {% do log("=======================================================================", info=True) %}
-
-      {# 3. DuckDB Optimizations #}
       {% do run_query("SET preserve_insertion_order = false;") %}
       {% do run_query("SET partitioned_write_max_open_files = 10;") %}
-
-      {# 4. Build Export Query #}
       {% set export_query %}
-          COPY (
-              SELECT * FROM {{ ref('fct_telemetry') }}
-              WHERE 1=1
-              {% if target_session %}
-                  AND session_key = {{ target_session }}
-              {% endif %}
-              {% if target_meeting %}
-                  AND meeting_key = {{ target_meeting }}
-              {% endif %}
-          )
-          TO 'F:/DaTech/Production/f1_data_project/output/telemetry_data'
-          (
-              FORMAT PARQUET,
-              PARTITION_BY (meeting_key, session_key, driver_number),
-              OVERWRITE_OR_IGNORE TRUE
-          );
+        COPY (SELECT * FROM {{ ref('fct_telemetry') }} {{ where_clause }})
+        TO '{{ path }}'
+        (FORMAT PARQUET, PARTITION_BY (meeting_key, session_key, driver_number), OVERWRITE_OR_IGNORE TRUE);
       {% endset %}
-
+      {% do log("Starting Parquet export to " ~ path ~ " " ~ where_clause, info=True) %}
       {% do run_query(export_query) %}
-      {% do log("SUCCESS: Telemetry export completed successfully!", info=True) %}
-      {% do log("=======================================================================", info=True) %}
-      
-    {% else %}
-      {% do log("Skipping export — export_data flag not set to true.", info=True) %}
+      {% do log("Export finished.", info=True) %}
     {% endif %}
-
-  {% else %}
-    {% do log("Skipping export execution during dbt parsing phase.", info=False) %}
   {% endif %}
-
 {% endmacro %}
 ```
 
@@ -3048,6 +5186,7 @@ Create **macros/export_fct_telemetry.sql**. It writes the table out as a partiti
 3. **Scoping variables:** `target_session_key` or `target_meeting_key` limit the export to new data (incremental export). With neither, it exports everything.
 4. **DuckDB settings:** `preserve_insertion_order = false` lets DuckDB stream without remembering row order (a large memory saver); `partitioned_write_max_open_files = 10` caps simultaneously open partition files.
 5. **`COPY (...) TO ... PARTITION_BY (meeting_key, session_key, driver_number) OVERWRITE_OR_IGNORE TRUE`:** writes the folder tree, replacing files that already exist.
+6. **`var('telemetry_export_path')` (new):** the output folder is a variable (environment variable `F1_EXPORT_PATH`, default `output/telemetry_data`) instead of a hard-coded `F:/` path, so the same macro runs on your laptop and in the Airflow container. `COPY` creates the partition folders but **not** the parent of that path: the parent must already exist.
 
 Create the output folder first, then run:
 
@@ -3078,9 +5217,37 @@ output/telemetry_data/
 
 Any tool (DuckDB, Power BI via a connector, Spark) can read this folder. **Partition pruning** means `WHERE session_key = 9158` reads one folder, not the whole lake.
 
+**Re-loading a session whose raw files changed.** An incremental model skips any session already in the table, so if you re-extract a session (the first copy was taken while it was live, say) the table will not notice. A small macro removes sessions from both incremental telemetry tables so the next `dbt run` rebuilds them:
+
+```jinja
+{# Remove sessions from the incremental telemetry tables so the next `dbt run` rebuilds them from fresh raw files.
+   dbt run-operation delete_sessions_from_incrementals --args '{sessions: [9158, 9159]}' #}
+{% macro delete_sessions_from_incrementals(sessions) %}
+  {% if execute and sessions | length > 0 %}
+    {% set ids = sessions | map('int') | join(', ') %}
+    {% for model_name in ['fct_telemetry', 'fct_telemetry_distance_trace'] %}
+      {% set rel = adapter.get_relation(database=target.database, schema=target.schema, identifier=model_name) %}
+      {% if rel is not none %}
+        {% do run_query("DELETE FROM " ~ rel ~ " WHERE session_key IN (" ~ ids ~ ")") %}
+        {% do log("Deleted sessions " ~ ids ~ " from " ~ model_name, info=True) %}
+      {% endif %}
+    {% endfor %}
+    {# run-operation does not auto-commit DML: without this the DELETE is silently rolled back #}
+    {% do adapter.commit() %}
+  {% endif %}
+{% endmacro %}
+```
+
+```bash
+dbt run-operation delete_sessions_from_incrementals --args '{sessions: [9158]}'
+dbt run --select fct_telemetry fct_telemetry_distance_trace
+```
+
+> **The `adapter.commit()` line is there because of a bug.** The first version of this macro logged "Deleted sessions ..." and the row count never changed: `run-operation` does **not** auto-commit DML, so the `DELETE` was rolled back silently. A log line saying "deleted" is not evidence of deletion; the test that found this counted the rows before and after.
+
 #### **Task 5: Safe Memory and Temp Settings**
 
-In `profiles.yml` (Chapter 5) the temp folder is already set. Create it so spilling can work:
+The shipped `profiles.yml` (Chapter 5) sets no `temp_directory`, so DuckDB spills to its default location. If you want it on a specific disk, set it under `config_options` so that it is applied once when the connection opens (see the Chapter 5 pitfall for why that matters), and create the folder so spilling can work:
 
 ```bash
 mkdir -p .duckdb_tmp
@@ -3090,9 +5257,327 @@ If you need to cap memory (for example on a shared machine), DuckDB accepts `mem
 
 ```yaml
       settings:
-        memory_limit: "8GB"
-        temp_directory: "F:/DaTech/Production/f1_data_project/.duckdb_tmp"
+        memory_limit: "8GB"            # fine under `settings`: it can change at any time
+      config_options:
+        temp_directory: "F:/DaTech/f1_data_project/duckdb_tmp"   # must stay under config_options
 ```
+
+#### **Task 6: Put Telemetry on a Distance Axis (new in the second edition)**
+
+Telemetry is recorded against time, but an engineer asks "where on the lap does driver A lose time to driver B?". For that you need speed, throttle and brake **against distance**. `fct_telemetry_distance_trace` builds that: it integrates speed into distance, then averages the readings into bins of `distance_bin_metres` (10 m by default).
+
+```sql
+{#
+  Telemetry resampled onto a DISTANCE axis (var distance_bin_metres) so laps can be compared point by point.
+  Distance is INTEGRATED from speed (sum of speed x dt), which drifts a little every lap. Because the circuit length is
+  constant, every COMPLETE lap (telemetry covers >= 98% of the lap time) is rescaled so that its total distance equals the
+  session's typical lap length (the median of complete-lap totals). Incomplete laps (cut-off in/out laps, red-flagged
+  laps) keep their raw distance and are marked is_complete_lap = FALSE; do not compare them point by point.
+  Laps through the pit lane follow a different path but are still rescaled; filter on is_representative_lap upstream.
+  Incremental by session, like fct_telemetry.
+#}
+{{ config(
+    materialized='incremental',
+    incremental_strategy=var('bq_incremental_strategy', 'insert_overwrite') if target.type == 'bigquery' else 'append',
+    unique_key=['session_key', 'driver_number', 'lap_number', 'distance_bin'] if (target.type == 'bigquery' and var('bq_incremental_strategy', 'insert_overwrite') == 'merge') else none,
+    partition_by=({'field': 'session_key', 'data_type': 'int64',
+                   'range': {'start': var('bq_session_key_start'), 'end': var('bq_session_key_end'), 'interval': 1}}
+                  if target.type == 'bigquery' else none)
+) }}
+
+WITH base AS (
+    SELECT t.*, l.lap_duration
+    FROM {{ ref('fct_telemetry') }} t
+    LEFT JOIN {{ ref('stg_laps') }} l
+        ON t.session_key = l.session_key AND t.driver_number = l.driver_number AND t.lap_number = l.lap_number
+    WHERE t.lap_number IS NOT NULL
+    {% if is_incremental() %}
+      AND t.session_key NOT IN (SELECT DISTINCT session_key FROM {{ this }})
+    {% endif %}
+),
+stepped AS (
+    SELECT
+        *,
+        COALESCE({{ f1_seconds_between('LAG(telemetry_timestamp) OVER w', 'telemetry_timestamp') }}, 0) AS dt_seconds,
+        -- window MIN/MAX run over integer microseconds, not TIMESTAMPs (some engines mishandle windowed MIN/MAX of TIMESTAMP)
+        MIN({{ f1_epoch_us('telemetry_timestamp') }}) OVER (PARTITION BY session_key, driver_number, lap_number) AS lap_first_us,
+        MAX({{ f1_epoch_us('telemetry_timestamp') }}) OVER (PARTITION BY session_key, driver_number, lap_number) AS lap_last_us
+    FROM base
+    WINDOW w AS (PARTITION BY session_key, driver_number, lap_number ORDER BY telemetry_timestamp)
+),
+integrated AS (
+    SELECT
+        *,
+        SUM(speed / 3.6 * dt_seconds) OVER (
+            PARTITION BY session_key, driver_number, lap_number ORDER BY telemetry_timestamp ROWS UNBOUNDED PRECEDING
+        ) AS lap_distance_raw_m,
+        ({{ f1_epoch_us('telemetry_timestamp') }} - lap_first_us) / 1000000.0 AS lap_elapsed_seconds
+    FROM stepped
+),
+lap_totals AS (
+    SELECT
+        session_key, driver_number, lap_number,
+        MAX(lap_distance_raw_m) AS lap_total_raw_m,
+        MAX(lap_duration) AS lap_duration,
+        (MAX(lap_last_us) - MIN(lap_first_us)) / 1000000.0 AS covered_seconds
+    FROM integrated
+    GROUP BY session_key, driver_number, lap_number
+),
+lap_flags AS (
+    SELECT *, COALESCE(covered_seconds >= 0.98 * lap_duration, FALSE) AS is_complete_lap
+    FROM lap_totals
+),
+session_length AS (
+    SELECT DISTINCT
+        session_key,
+        {{ f1_median_over('CASE WHEN is_complete_lap THEN lap_total_raw_m END', 'session_key') }} AS track_length_m
+    FROM lap_flags
+),
+normalised AS (
+    SELECT
+        i.*,
+        f.is_complete_lap,
+        s.track_length_m,
+        ROUND(
+            CASE WHEN f.is_complete_lap AND f.lap_total_raw_m > 0 AND s.track_length_m IS NOT NULL
+                 THEN i.lap_distance_raw_m * s.track_length_m / f.lap_total_raw_m
+                 ELSE i.lap_distance_raw_m END, 6) AS lap_distance_m
+    FROM integrated i
+    JOIN lap_flags f ON i.session_key = f.session_key AND i.driver_number = f.driver_number AND i.lap_number = f.lap_number
+    JOIN session_length s ON i.session_key = s.session_key
+),
+binned AS (
+    SELECT *, {{ f1_cast('FLOOR(lap_distance_m / ' ~ var('distance_bin_metres') ~ ')', 'int') }} AS distance_bin
+    FROM normalised
+)
+SELECT
+    session_key, meeting_key, driver_number, lap_number,
+    distance_bin,
+    distance_bin * {{ var('distance_bin_metres') }} AS distance_m,
+    MIN(lap_elapsed_seconds) AS elapsed_seconds,
+    AVG(speed) AS avg_speed_kph,
+    MIN(speed) AS min_speed_kph,
+    AVG(throttle) AS avg_throttle,
+    MAX(brake) AS max_brake,
+    {{ f1_cast('ROUND(AVG(gear))', 'int') }} AS gear,
+    AVG(x) AS x, AVG(y) AS y,
+    MIN(is_complete_lap) AS is_complete_lap,
+    MIN(track_length_m) AS track_length_m
+FROM binned
+GROUP BY session_key, meeting_key, driver_number, lap_number, distance_bin
+```
+
+**Why it is written this way**
+
+* **Distance is integrated from speed** (the sum of speed times elapsed time), so it **drifts** a little every lap. If you compare two laps raw, their corners sit at slightly different distances and every corner-by-corner comparison is quietly wrong.
+* **Normalisation:** the model finds the session's typical lap length (the median total distance of the *complete* laps, those where telemetry covers at least 98% of the lap time) and rescales every complete lap to it. Incomplete laps (cut-off in/out laps) keep their raw distance and are marked `is_complete_lap = false`; do not compare those point by point. This step was found necessary by testing: without it, a corner's measured apex speed on the synthetic data averaged 142 km/h when the true value was 90, because the corners of slower laps had slid along the lap.
+* **Window functions over integer microseconds, not timestamps:** the first and last sample times are taken with `epoch_us(...)` (an integer). Some engines mishandle windowed `MIN`/`MAX` over a `TIMESTAMP` column (the BigQuery emulator returned a wrong value), and integers are the same everywhere.
+* **The bin is computed in its own CTE.** Selecting an expression of `lap_distance_m` while grouping by an *alias* of a different expression is accepted by DuckDB and rejected by BigQuery. It is a genuine portability bug found when the model was ported.
+* **`ROUND` before the floor:** a distance sum that lands exactly on a bin edge could flip to the neighbouring bin depending on floating-point rounding order. Rounding to six decimals first makes a full build and an incremental refill produce identical bins.
+
+#### **Task 7: Per-Lap Telemetry KPIs and the Delta Trace**
+
+**Step 1: A one-line summary of every lap.** `fct_telemetry_lap_summary` reduces each lap to the numbers an engineer looks at first: top and minimum speed, how much of the lap was full throttle or braking, the number of **braking zones** (a zone starts when the brake goes from off to on), DRS-open share and gear usage.
+
+```sql
+{# Per driver per lap telemetry KPIs: top/min speed, throttle/brake application, gear usage, DRS and braking zones. #}
+WITH samples AS (
+    SELECT
+        *,
+        LAG(brake) OVER (PARTITION BY session_key, driver_number, lap_number ORDER BY telemetry_timestamp) AS prev_brake
+    FROM {{ ref('fct_telemetry') }}
+    WHERE lap_number IS NOT NULL
+)
+SELECT
+    session_key, meeting_key, driver_number, lap_number,
+    COUNT(*) AS telemetry_samples,
+    MAX(speed) AS top_speed_kph,
+    MIN(speed) AS min_speed_kph,
+    AVG(speed) AS avg_speed_kph,
+    AVG({{ f1_cast('(throttle >= 99)', 'int') }}) AS full_throttle_fraction,
+    AVG({{ f1_cast('(brake > 0)', 'int') }}) AS braking_fraction,
+    -- a braking zone starts when brake goes from released (0) to applied (>0)
+    COUNT(CASE WHEN brake > 0 AND COALESCE(prev_brake, 0) = 0 THEN 1 END) AS braking_zone_count,
+    AVG({{ f1_cast('(drs IN (10, 12, 14))', 'int') }}) AS drs_open_fraction,
+    MAX(gear) AS max_gear,
+    AVG({{ f1_cast('(gear <= 3)', 'int') }}) AS low_gear_fraction,
+    AVG({{ f1_cast('(gear >= 7)', 'int') }}) AS high_gear_fraction
+FROM samples
+GROUP BY session_key, meeting_key, driver_number, lap_number
+```
+
+**Step 2: Where does a driver lose time to the fastest lap?** `fct_lap_time_delta_trace` takes each driver's best lap and the session's fastest lap and subtracts their elapsed times at every distance bin. A positive `time_delta_seconds` means the driver is behind the reference at that point.
+
+```sql
+{# Each driver's best lap vs the session's fastest lap, point by point along the lap (the engineer's "delta trace").
+   time_delta_seconds > 0 means the driver is behind the reference at that distance. Only drivers with extracted
+   telemetry appear (telemetry is the heaviest endpoint and may be extracted for fewer drivers/sessions). #}
+WITH best AS (
+    SELECT session_key, driver_number, lap_number, is_overall_fastest_lap FROM {{ ref('fct_fastest_laps') }}
+),
+reference AS (
+    SELECT session_key, driver_number AS ref_driver_number, lap_number AS ref_lap_number FROM best WHERE is_overall_fastest_lap
+)
+SELECT
+    d.session_key, d.driver_number, d.lap_number, r.ref_driver_number,
+    d.distance_bin, d.distance_m,
+    d.elapsed_seconds - ref.elapsed_seconds AS time_delta_seconds,
+    d.avg_speed_kph - ref.avg_speed_kph AS speed_delta_kph
+FROM {{ ref('fct_telemetry_distance_trace') }} d
+JOIN best b ON d.session_key = b.session_key AND d.driver_number = b.driver_number AND d.lap_number = b.lap_number
+JOIN reference r ON d.session_key = r.session_key
+JOIN {{ ref('fct_telemetry_distance_trace') }} ref
+    ON ref.session_key = r.session_key AND ref.driver_number = r.ref_driver_number
+    AND ref.lap_number = r.ref_lap_number AND ref.distance_bin = d.distance_bin
+```
+
+> **It only covers drivers with telemetry.** Telemetry is the heaviest endpoint and may be extracted for fewer drivers or sessions than laps, and this trace appears only where a driver's best lap has telemetry.
+
+#### **Task 8: Detect Corners and Measure Apex Speeds (new in the second edition)**
+
+The API publishes **no corner data**: no turn numbers, names or positions. So corners are **detected** from the telemetry of a reference lap.
+
+**Step 1: Detect the corners.** For each session, `dim_session_corners` takes the fastest lap that has telemetry, smooths its speed along the distance axis, and calls a point an **apex** when it is the lowest speed within `corner_min_separation_bins` *and* at least `corner_min_speed_drop_kph` below the highest speed nearby. Apexes are numbered in lap order. It also estimates the turn angle and direction from the x/y path, and classifies the corner as slow, medium or fast.
+
+```sql
+{#
+  DERIVED corner segmentation. OpenF1 publishes no corner data, so corners are DETECTED from telemetry:
+    1. take each session's fastest lap that has telemetry (the reference lap) on the distance axis
+    2. smooth speed, then call a bin an apex when it is the lowest speed within var corner_min_separation_bins
+       AND at least var corner_min_speed_drop_kph below the highest speed within var corner_prominence_window_bins
+    3. number the apexes in lap order; entry/exit points sit var corner_entry/exit_distance_m either side
+  corner_number is therefore "the Nth detected braking/slowing zone", NOT the official turn number, and it can differ
+  between sessions (a chicane may be one corner in one session and two in another). Apexes within
+  var corner_min_separation_bins of the lap start/end are not detected (their detection windows would be cut off). turn_direction uses the raw x/y
+  plane convention and may be mirrored relative to the real circuit. Speed class uses the reference apex speed.
+#}
+WITH ref AS (
+    SELECT session_key, driver_number, lap_number
+    FROM (
+        SELECT t.session_key, t.driver_number, t.lap_number,
+               ROW_NUMBER() OVER (PARTITION BY t.session_key ORDER BY f.fastest_lap_time_seconds) AS rn
+        FROM (SELECT DISTINCT session_key, driver_number, lap_number FROM {{ ref('fct_telemetry_distance_trace') }}) t
+        JOIN {{ ref('fct_fastest_laps') }} f
+            ON t.session_key = f.session_key AND t.driver_number = f.driver_number AND t.lap_number = f.lap_number
+    ) ranked
+    WHERE rn = 1
+),
+trace AS (
+    SELECT d.session_key, d.driver_number AS ref_driver_number, d.lap_number AS ref_lap_number,
+           d.distance_bin, d.distance_m, d.avg_speed_kph, d.x, d.y
+    FROM {{ ref('fct_telemetry_distance_trace') }} d
+    JOIN ref r ON d.session_key = r.session_key AND d.driver_number = r.driver_number AND d.lap_number = r.lap_number
+),
+smoothed AS (
+    SELECT *,
+        AVG(avg_speed_kph) OVER (PARTITION BY session_key ORDER BY distance_bin
+            ROWS BETWEEN {{ var('corner_smooth_bins') }} PRECEDING AND {{ var('corner_smooth_bins') }} FOLLOWING) AS speed_smooth
+    FROM trace
+),
+windows AS (
+    SELECT *,
+        MIN(speed_smooth) OVER (PARTITION BY session_key ORDER BY distance_bin
+            ROWS BETWEEN {{ var('corner_min_separation_bins') }} PRECEDING AND {{ var('corner_min_separation_bins') }} FOLLOWING) AS local_min,
+        MAX(speed_smooth) OVER (PARTITION BY session_key ORDER BY distance_bin
+            ROWS BETWEEN {{ var('corner_prominence_window_bins') }} PRECEDING AND {{ var('corner_prominence_window_bins') }} FOLLOWING) AS local_max
+    FROM smoothed
+),
+candidates AS (
+    SELECT *,
+        (speed_smooth = local_min AND local_max - speed_smooth >= {{ var('corner_min_speed_drop_kph') }}
+         -- windows are truncated at the lap edges, which makes the first/last bins look like minima: require a full window
+         AND distance_bin >= MIN(distance_bin) OVER (PARTITION BY session_key) + {{ var('corner_min_separation_bins') }}
+         AND distance_bin <= MAX(distance_bin) OVER (PARTITION BY session_key) - {{ var('corner_min_separation_bins') }}) AS is_candidate
+    FROM windows
+),
+apexes AS (
+    SELECT *,
+        ROW_NUMBER() OVER (PARTITION BY session_key ORDER BY distance_bin) AS corner_number
+    FROM (
+        SELECT *, COALESCE(LAG(is_candidate) OVER (PARTITION BY session_key ORDER BY distance_bin), FALSE) AS prev_candidate
+        FROM candidates
+    ) c
+    WHERE is_candidate AND NOT prev_candidate     -- first bin of a flat minimum only
+),
+bounds AS (
+    SELECT a.*,
+        a.distance_bin - {{ (var('corner_entry_distance_m') / var('distance_bin_metres')) | int }} AS entry_bin,
+        a.distance_bin + {{ (var('corner_exit_distance_m') / var('distance_bin_metres')) | int }} AS exit_bin
+    FROM apexes a
+),
+geom AS (
+    SELECT b.*, e.x AS entry_x, e.y AS entry_y, x_.x AS exit_x, x_.y AS exit_y
+    FROM bounds b
+    LEFT JOIN trace e ON b.session_key = e.session_key AND e.distance_bin = b.entry_bin
+    LEFT JOIN trace x_ ON b.session_key = x_.session_key AND x_.distance_bin = b.exit_bin
+),
+turns AS (
+    -- radians to degrees by hand: BigQuery has no DEGREES function
+    SELECT *,
+        ATAN2(y - entry_y, x - entry_x) * 180.0 / ACOS(-1) AS heading_in,
+        ATAN2(exit_y - y, exit_x - x) * 180.0 / ACOS(-1) AS heading_out
+    FROM geom
+),
+angled AS (
+    SELECT *, heading_out - heading_in AS raw_turn
+    FROM turns
+)
+SELECT
+    session_key,
+    corner_number,
+    distance_bin AS apex_bin,
+    distance_m AS apex_distance_m,
+    entry_bin, exit_bin,
+    avg_speed_kph AS reference_apex_speed_kph,
+    CASE WHEN raw_turn > 180 THEN raw_turn - 360 WHEN raw_turn < -180 THEN raw_turn + 360 ELSE raw_turn END AS turn_angle_deg,
+    CASE WHEN (CASE WHEN raw_turn > 180 THEN raw_turn - 360 WHEN raw_turn < -180 THEN raw_turn + 360 ELSE raw_turn END) > 0
+         THEN 'LEFT' ELSE 'RIGHT' END AS turn_direction,
+    CASE WHEN avg_speed_kph < {{ var('corner_slow_kph') }} THEN 'SLOW'
+         WHEN avg_speed_kph >= {{ var('corner_fast_kph') }} THEN 'FAST' ELSE 'MEDIUM' END AS speed_class,
+    x AS apex_x, y AS apex_y,
+    ref_driver_number, ref_lap_number
+FROM angled
+```
+
+**Step 2: Measure every driver through every corner.** `fct_corner_performance` finds, for every driver and lap, the **entry speed, apex speed and exit speed**, the distance from the first brake application to the apex, and the distance from the apex to full throttle.
+
+```sql
+{# Per driver per lap per DETECTED corner (see dim_session_corners for what "corner" means here). #}
+WITH j AS (
+    SELECT
+        t.session_key, t.driver_number, t.lap_number, c.corner_number,
+        t.distance_bin, t.distance_m, t.avg_speed_kph, t.min_speed_kph, t.avg_throttle, t.max_brake, t.elapsed_seconds,
+        c.entry_bin, c.apex_bin, c.exit_bin, c.apex_distance_m
+    FROM {{ ref('fct_telemetry_distance_trace') }} t
+    JOIN {{ ref('dim_session_corners') }} c
+        ON t.session_key = c.session_key
+        AND t.distance_bin BETWEEN c.entry_bin - {{ (var('corner_brake_lookback_m') / var('distance_bin_metres')) | int }} AND c.exit_bin
+),
+agg AS (
+    SELECT
+        session_key, driver_number, lap_number, corner_number,
+        MIN(apex_distance_m) AS apex_distance_m,
+        MIN(CASE WHEN distance_bin = entry_bin THEN avg_speed_kph END) AS entry_speed_kph,
+        MIN(CASE WHEN distance_bin BETWEEN apex_bin - 3 AND apex_bin + 3 THEN min_speed_kph END) AS apex_speed_kph,
+        MIN(CASE WHEN distance_bin = exit_bin THEN avg_speed_kph END) AS exit_speed_kph,
+        MIN(CASE WHEN max_brake > 0 AND distance_bin <= apex_bin THEN distance_m END) AS brake_start_distance_m,
+        MIN(CASE WHEN avg_throttle >= 99 AND distance_bin > apex_bin THEN distance_m END) AS full_throttle_distance_m,
+        MIN(CASE WHEN distance_bin = exit_bin THEN elapsed_seconds END) - MIN(CASE WHEN distance_bin = entry_bin THEN elapsed_seconds END) AS corner_time_seconds
+    FROM j
+    GROUP BY session_key, driver_number, lap_number, corner_number
+)
+SELECT
+    a.*,
+    a.apex_distance_m - a.brake_start_distance_m AS brake_to_apex_distance_m,
+    a.full_throttle_distance_m - a.apex_distance_m AS apex_to_full_throttle_distance_m,
+    a.apex_speed_kph - MAX(a.apex_speed_kph) OVER (PARTITION BY a.session_key, a.corner_number) AS apex_speed_delta_to_session_best_kph,
+    l.is_representative_lap
+FROM agg a
+LEFT JOIN {{ ref('int_lap_context') }} l
+    ON a.session_key = l.session_key AND a.driver_number = l.driver_number AND a.lap_number = l.lap_number
+```
+
+> **What "corner" means here.** `corner_number` is *the Nth detected slowing zone*, **not** the official turn number, and it can differ between sessions (a chicane may be one corner in one session and two in another). `turn_direction` uses the raw x/y convention and may be mirrored. Apexes within `corner_min_separation_bins` of the lap start or end are not detected, because their detection windows would be cut off. The thresholds were tuned on synthetic laps, so expect to retune them on real circuits.
 
 ### **Learner Pitfalls & Troubleshooting**
 
@@ -3116,13 +5601,35 @@ If you need to cap memory (for example on a shared machine), DuckDB accepts `mem
 * **Why it Happens:** the safety switch `export_data` was not set, or was passed with `--args` instead of `--vars`.
 * **The Solution:** pass `--vars '{export_data: true}'` and confirm the log line "Starting ... Parquet export".
 
+* **The Problem (second edition, hit on the author's real data):** the first full build of `fct_telemetry` runs for **1 hour 25 minutes**, and the tests that follow it error out.
+* **Why it Happens:** it joins every car-data reading to the latest location and lap in one go, spilling heavily to disk on a single thread, and if `temp_directory` is configured under `settings` the spill then triggers the error described in Chapter 5. The model is correct; the job is simply too big for one transaction.
+* **The Solution:** build only the sessions you need with `telemetry_only_sessions` (Task 3), and keep any `temp_directory` under `config_options`.
+
+* **The Problem (second edition, found by the tests):** corner apex speeds vary wildly from lap to lap even though every lap uses the same corners.
+* **Why it Happens:** distance integrated from speed drifts, so a slower lap's corners land at different distances and the corner window misses the true minimum.
+* **The Solution:** normalise each complete lap to the session's typical lap length (Task 6). Before this fix the synthetic data measured 142 km/h average apex speed against a true 90; afterwards every lap and driver measured exactly 90.
+
+* **The Problem (second edition, found by the tests):** a corner appears at distance 0 with an apex speed of about 200 km/h and no turn angle.
+* **Why it Happens:** at the start of the lap the smoothing and prominence windows are cut off on one side, so the first bin looks like a local minimum.
+* **The Solution:** require a full window on both sides, so no apex is detected within `corner_min_separation_bins` of either end of the lap.
+
+* **The Problem (second edition, hit on the author's real data):** `assert_corner_apex_is_a_minimum` warns **once**.
+* **Why it Happens:** the test checks that, on each session's *reference* lap, an apex is slower than its entry and exit points. It can warn for several reasons: corners packed so closely that one corner's entry or exit point lies inside its neighbour, a telemetry dropout, a lock-up or slide on the reference lap, or a detection threshold that needs retuning. A single warning cannot tell them apart. Note also that the test looks at one row per session and corner on the *reference lap*, not at every corner measurement, so the denominator for "how rare is one warning" is the number of session-corner pairs, much smaller than the number of measured corners.
+* **The Solution:** the test is a **warning**, not an error, for exactly that reason. Inspect the session's corner and its neighbours in `dim_session_corners` and `fct_corner_performance` before retuning a threshold. `docs/ISSUES_CHECKLIST.md` (item D11) records that the detector finds speed minima and braking zones rather than official turns.
+
+* **The Problem (second edition, found by the tests):** after `delete_sessions_from_incrementals` the telemetry row count is unchanged.
+* **Why it Happens:** `dbt run-operation` does not auto-commit, so the `DELETE` was silently rolled back.
+* **The Solution:** `{% do adapter.commit() %}` at the end of the macro (Task 4).
+
 ---
 
 ## **Chapter 8: Closing the Loop: Running dbt From Airflow**
 
 ### **Chapter Overview**
 
-So far you trigger Airflow, then separately trigger dbt by hand. In this chapter the DAG calls dbt itself, passing the sessions it just extracted so the telemetry export is **scoped to new data**. **[CODE FINAL, RUN NOT CONFIRMED]** The build logs contain the final DAG code, but no log of a successful end-to-end run with the dbt task, and the last logged DAG run failed for an unrelated reason (see Chapter 3's last pitfall).
+So far you trigger Airflow, then separately trigger dbt by hand. In this chapter the DAG calls dbt itself, once extraction has finished. **[CODE FINAL, RUN NOT CONFIRMED]** The task and its container setup are in the repository and the DAG was parsed with real Airflow, but **nothing here has been run inside Docker**: the build logs contain no successful run of the dbt task, and the second edition's test environment had no Docker.
+
+> **What changed from the first edition.** In the first edition this chapter was a to-do list ("add these mounts, write a container profile, change the paths"). All of that is now **in the repository**: the compose file mounts the dbt project, `profiles.yml` has a `container` target, and the paths that were hard-coded to `F:/` are environment variables. The task is also simpler: it runs `dbt build`, and the telemetry **export** is no longer scoped by the DAG; run it separately with the `run-operation` from Chapter 7.
 
 **Concepts introduced in this chapter**
 
@@ -3133,103 +5640,65 @@ So far you trigger Airflow, then separately trigger dbt by hand. In this chapter
 
 ### **Step by Step Procedures**
 
-#### **Task 1: Make dbt Available Inside the Airflow Container**
+#### **Task 1: Check That dbt Is Available Inside the Airflow Container**
 
-The final DAG runs `dbt` **inside the Airflow container**, and it expects two locations: the project at **`/opt/airflow/dbt/f1_data_project`** and a profiles folder at **`/opt/airflow/.dbt`** (override with the `DBT_PROFILES_DIR` environment variable). The compose file in Chapter 2 provides none of this, so the steps below are **[ADDED FOR THIS BOOK]**:
+The task runs `dbt` **inside the Airflow container**, so the container needs dbt, the project, and paths that exist in Linux. The second edition's Dockerfile and compose file (Chapter 2) already provide all three; this task is a checklist of *why* each piece is there, so you can debug it.
 
-1. **Install dbt in the image.** For example set `_PIP_ADDITIONAL_REQUIREMENTS: "dbt-duckdb"` under the `environment:` block in `docker-compose.yaml` (convenient for development; build a custom image for production).
-2. **Mount the project and a container profile.** Add under `volumes:`
-   * `- ../dbt_f1_transformations:/opt/airflow/dbt/f1_data_project`
-   * `- ./dbt_profiles:/opt/airflow/.dbt` (a folder containing a container-specific `profiles.yml`)
-3. **Use Linux paths inside the container.** The `F:/...` paths from Chapters 5 and 7 do **not exist in the container**. The container profile must point the DuckDB file, the Parquet glob and the export folder at mounted paths (for example `/opt/airflow/data/raw/...`), and `sources.yml` and the export macro need the same treatment (for example by moving the root path into a dbt variable).
+1. **dbt is installed.** The Dockerfile installs `requirements.txt` (`pyarrow`, `faster-whisper` and so on) and `dbt-duckdb` into the image when it is built. That needs the **Python 3.11 image tag**; see the Chapter 2 pitfall.
+2. **The dbt project is mounted** at `/opt/airflow/dbt/f1_data_project` (`../dbt_f1_transformations` in the compose file), and `DBT_PROJECT_DIR` and `DBT_PROFILES_DIR` point there. dbt finds `profiles.yml` in the project folder.
+3. **The paths resolve in Linux.** The `container` target in `profiles.yml` and the `F1_*` environment variables in the compose file point the raw Parquet, the DuckDB file and the export folder at `/opt/airflow/data/...`, which is the mounted `airflow/data` folder. The `F:/...` paths from your laptop do not exist inside the container, which is why they are environment variables with defaults rather than constants.
 
-> **Why this matters.** This is the most likely reason the dbt task would fail on first run. It is an inference from the project files, not an error recorded in the logs.
+> **Why this matters.** A wrong path or a missing install is still the most likely reason the dbt task fails on its first real run. That is an inference from the files, not an error recorded in a log.
 
-#### **Task 2: Add the dbt Task to the DAG**
+#### **Task 2: The `run_dbt_build` Task**
 
-Add the block below inside the `with DAG(...)` body of **extract_openf1_dag.py**, after `load_task` is defined, and add `import os`, `import shlex`, `import subprocess` and `from airflow.exceptions import AirflowException` at the top of the file, plus these two constants below the imports:
-
-```python
-DBT_PROJECT_DIR = "/opt/airflow/dbt/f1_data_project"
-DBT_PROFILES_DIR = os.environ.get("DBT_PROFILES_DIR", "/opt/airflow/.dbt")
-```
-
-Then add `"dbt"` to the DAG's `tags` list, and paste the task:
+The task is already part of the DAG you pasted in Chapter 3 (it is skipped unless you tick `run_dbt_build` in the trigger form). Here it is on its own:
 
 ```python
     # ==========================================
-    # TASK: DBT TRANSFORMATION & EXPORT
-    # Receives all_sessions XComArg — same single reference used throughout.
+    # OPTIONAL: RUN DBT AFTER EXTRACTION
     # ==========================================
     @task
-    def run_dbt_telemetry(session_keys_list: list):
-        """
-        Runs dbt incrementally against fct_telemetry, then exports to Parquet
-        via the export_fct_telemetry macro.
-
-        Incremental logic lives in the SQL model (NOT EXISTS against {{ this }}),
-        so no --vars are needed for the build step.
-        --vars are passed only to the run-operation export macro.
-        """
-        if not session_keys_list:
-            logging.info("No session keys to process. Skipping dbt.")
-            return
+    def run_dbt_build(load_result, **context):
+        if not context["params"]["run_dbt_build"]:
+            raise AirflowSkipException("run_dbt_build is off for this run.")
+        if not load_result["files"]:
+            raise AirflowSkipException("Nothing was extracted, so there is nothing to transform.")
 
         env = {**os.environ, "DBT_PROFILES_DIR": DBT_PROFILES_DIR}
+        cmd = f"dbt build --target {shlex.quote(DBT_TARGET)} --profiles-dir {shlex.quote(DBT_PROFILES_DIR)}"
+        logging.info(f"Running: {cmd} (cwd={DBT_PROJECT_DIR})")
+        result = subprocess.run(cmd, shell=True, capture_output=True, text=True, cwd=DBT_PROJECT_DIR, env=env)
+        logging.info(result.stdout[-6000:])
+        if result.returncode != 0:
+            logging.error(result.stderr[-3000:])
+            raise AirflowFailException(f"dbt build failed with exit code {result.returncode}. See the task log above.")
+        return "dbt build succeeded"
 
-        def run_cmd(cmd: str):
-            logging.info(f"Executing: {cmd}")
-            result = subprocess.run(
-                cmd, shell=True, capture_output=True,
-                text=True, cwd=DBT_PROJECT_DIR, env=env
-            )
-            if result.returncode != 0:
-                raise AirflowException(
-                    f"Command failed:\n{result.stderr}\n{result.stdout}"
-                )
-            logging.info(result.stdout)
+    # ==========================================
+    # OPTIONAL: TRANSCRIBE TEAM RADIO (one session at a time: CPU heavy)
+    # ==========================================
+    @task(max_active_tis_per_dag=1)
+    def transcribe_team_radio(target_session, **context):
+        if not context["params"]["transcribe_radio"]:
+            raise AirflowSkipException("transcribe_radio is off for this run.")
+        from modules.radio_transcriber import transcribe_session
+        return transcribe_session(target_session, RAW_DIR, model_name=os.environ.get("RADIO_WHISPER_MODEL", "small.en"))
 
-        # Step 1: Incremental build — model uses NOT EXISTS against {{ this }},
-        # so it automatically skips sessions already present in the table.
-        run_cmd("dbt run --select fct_telemetry")
-
-        # Step 2: Export via macro — vars determine session scope for the COPY statement.
-        if len(session_keys_list) == 1:
-            vars_json = (
-                f'{{"target_session_key": {session_keys_list[0]}, "export_data": true}}'
-            )
-            logging.info(f"Incremental Parquet export for session: {session_keys_list[0]}")
-        else:
-            vars_json = '{"export_data": true}'
-            logging.info(
-                f"Full historical Parquet export for {len(session_keys_list)} sessions."
-            )
-
-        run_cmd(
-            f"dbt run-operation export_fct_telemetry --vars {shlex.quote(vars_json)}"
-        )
-        logging.info("✅ dbt transformation and export completed successfully.")
-
-    dbt_task = run_dbt_telemetry(all_sessions)
-```
-
-Then connect it after the loading step:
-
-```python
-    # dbt runs after load is confirmed; receives all_sessions for export scoping
-    load_task >> dbt_task
+    radio_task = transcribe_team_radio.expand(target_session=all_sessions)
 ```
 
 **What to notice**
 
-* **Scoping:** the dbt *build* is incremental by itself (Chapter 7's `NOT EXISTS`). The *export* is scoped only when the run extracted **exactly one** session; with several sessions it falls back to a full export, so single-session runs are the cheap path.
-* **`shlex.quote`:** session values are untrusted strings once they reach a shell command; always quote them.
-* **Failing loudly:** a non-zero dbt exit code raises `AirflowException`, so the task turns red and retries rather than silently succeeding.
-* **Separation:** the task shells out to the same dbt commands you ran by hand, so you can debug them in a terminal.
+* **Opt-in and safe to skip:** `AirflowSkipException` marks the task *skipped* (pink), not failed, when the parameter is off or when nothing was extracted, so a normal extraction run never touches your warehouse.
+* **`shlex.quote`:** the target name and profiles folder are quoted before they reach a shell command. They come from environment variables here, but the habit costs nothing and prevents injection when someone later passes a value from a form.
+* **Failing loudly:** a non-zero dbt exit code raises `AirflowFailException`, so the task turns red with the tail of dbt's output in the log. The standard output is logged first, so a failed test is visible.
+* **`dbt build`, not `dbt run`:** the build runs the tests too, in dependency order, and **skips everything downstream of a failed test**. This is deliberate. It is also why the source-data tests are warnings on real data (Chapter 6): an error there would stop the whole pipeline.
+* **Separation:** the task shells out to the same dbt command you run by hand, so you can reproduce a failure in a terminal.
 
-#### **Task 3: Where Cosmos Fits (Planned)**
+#### **Task 3: Where Cosmos Fits (Optional)**
 
-`airflow/dags/dbt_cosmos_dag.py` was scaffolded for **Astronomer Cosmos**, a library that renders each dbt model as its own Airflow task so lineage appears in the Airflow graph. **[SCAFFOLDED]** The file is empty in the build logs; the production DAG uses the subprocess approach above. Treat Cosmos as the next learning step once the subprocess version works.
+`airflow/dags/dbt_cosmos_dag.py` now exists. It uses **Astronomer Cosmos**, a library that renders each dbt model as its own Airflow task, so a failed model or test shows up in the Airflow graph instead of as one opaque "dbt build". It is **[CODE FINAL, RUN NOT CONFIRMED]**: it needs `astronomer-cosmos` in the image (add it to `AIRFLOW_EXTRA_PIP`), and it excludes the heavy incremental telemetry models so they are not rebuilt on every run. If Cosmos is not installed the file defines nothing and Airflow parses it cleanly, so it is safe to leave in place. Treat it as the next learning step once the plain `run_dbt_build` task works.
 
 ### **Learner Pitfalls & Troubleshooting**
 
@@ -3245,9 +5714,13 @@ Then connect it after the loading step:
 * **Why it Happens:** a SQL tool, Power BI or a second dbt process holds the file (DuckDB allows one writer).
 * **The Solution:** disconnect interactive tools before the scheduled run, or schedule dbt when nobody is querying.
 
+* **The Problem:** the dbt task is skipped every time.
+* **Why it Happens:** both opt-in parameters default to off, and the task also skips when nothing was extracted.
+* **The Solution:** tick **run_dbt_build** in *Trigger DAG w/ config*, and check the extract tasks actually wrote files.
+
 ---
 
-## **Chapter 9: Serving the Data: SQL Tools and Power BI**
+## **Chapter 9: Serving the Data: SQL Tools, Power BI, Dashboards and the Semantic Layer**
 
 ### **Chapter Overview**
 
@@ -3259,6 +5732,8 @@ A warehouse nobody can query is a hobby. This chapter connects tools to the Duck
 * **Single-writer rule:** DuckDB lets one process **write** at a time. Open the file read-only for analysis whenever you can.
 * **Schema drift:** the shape or type of data changing between files.
 * **Materialising a view as a table:** storing the result so BI tools read ready values instead of recomputing a heavy query.
+* **Semantic layer:** one governed definition of each business metric ("average representative lap time"), so every tool that asks for it gets the same number.
+* **Headless test:** running an app's pages in a test with no browser, to check they render without errors.
 
 ### **Step by Step Procedures**
 
@@ -3280,7 +5755,7 @@ Use the left panel to browse tables and the editor to run SQL (**Ctrl + Enter**)
 #### **Task 3: Connect Power BI**
 
 1. Install the **DuckDB ODBC driver** and create a **System DSN** pointing at the `.duckdb` file.
-2. In Power BI: **Get Data > ODBC**, choose the DSN, and select the **16 mart tables** (2 dimensions and 14 facts).
+2. In Power BI: **Get Data > ODBC**, choose the DSN, and select the mart tables you want. The first-edition build had 16 (2 dimensions and 14 facts); the current project has 34 mart models (4 in `core/`, 30 in `analytics/`).
 3. In the relationship view, link facts to dimensions on `session_key` and `driver_number` (the star schema from Chapter 4).
 
 For laptops with limited RAM, reduce parallel loading in Power BI's Data Load options (for example **parallel loading = 1**) and consider setting a DuckDB `temp_directory` (Chapter 5) so large queries can spill.
@@ -3294,7 +5769,7 @@ This is the full story, in order, because every step teaches something.
 3. **First fix (necessary, not sufficient).** Staging keeps `interval` and `gap_to_leader` as **text**; the mart converts with `TRY_CAST`, keeps the text in `lapped_status`, and the model is materialised as a **table**.
 4. **The error came back**, now at model creation: `Conversion Error: Could not convert string '+2 LAPS' to DOUBLE`.
 5. **Real root cause.** The problem was never in the models. `read_parquet` on a glob infers each column's type from the **first file**. If that file stores gaps as numbers (DOUBLE) and a later file has strings, the later file cannot be read. The Airflow sanitiser fixes mixing **inside** one file but not **between** files.
-6. **Real fix.** `union_by_name=true` on the source (Chapter 5), which reconciles types across files.
+6. **Real fix.** `union_by_name=true` on the source (Chapter 5), which reconciles types across files. In the second edition **every** source uses it, not only the three that had already caused trouble.
 7. **Verification.** `dbt run --select stg_intervals+` then refresh Power BI.
 
 **What it teaches**
@@ -3302,6 +5777,357 @@ This is the full story, in order, because every step teaches something.
 * A fix at the wrong layer can look right and fail later. Read the error's *location*.
 * Prevent the class of error where it begins: **schema contracts at the source**.
 * Keep raw text columns raw, convert in the mart with `TRY_CAST`, and keep the original text for analysis.
+
+#### **Task 5: Dashboards with Streamlit (new in the second edition)**
+
+Power BI is the right tool for a polished report. For *exploring* race data, an engineer wants something that runs next to the warehouse, in Python, with no licence and no ODBC driver. **Streamlit** fits: a page is a Python function, and charts are **Plotly** figures. The app lives in **dashboards/**.
+
+```bash
+pip install -r dashboards/requirements.txt
+F1_DUCKDB_PATH=/path/to/f1_local_warehouse.duckdb streamlit run dashboards/app.py
+```
+
+Navigation is organised by **role** and **race phase**. You pick a season, a Grand Prix, a session and a focus and comparison driver once, in the sidebar, and every page reads that shared context.
+
+| Role | Pre-race | During race (replay) | Post-race |
+|---|---|---|---|
+| Race Engineer | baseline telemetry, circuit map, tyres, weather, setup gaps | per-lap telemetry summary, rule-based alerts, radio | telemetry debrief, corners, stints, incidents |
+| Race Analyst | grid, standings, circuit history, competitor pace | timing tower, position and gap evolution, pit stops, overtakes | classification, pace, strategy, overtakes, championship |
+| Race Data Scientist | finishing-position base rate, hazard, degradation models, simulator | stint projection, anomaly screen, hazard | prediction error, residuals, counterfactual simulator |
+
+A tenth page, **Data coverage**, shows what the warehouse holds and flags data-health problems.
+
+**The rules the pages follow**
+
+* **The warehouse is opened read-only.** DuckDB allows one writer: if dbt is running you get a clear message, not a hang.
+* **Historical data is never shown as live.** The "During race" pages are replays driven by a lap slider, and say so.
+* **Pre-race pages use only information from before the race.** The strategy simulator is calibrated from an earlier session and carries a leakage warning, because circuit pit loss and safety-car hazard in the marts include every race in the warehouse.
+* **Every panel is tagged** measured, derived, estimated, predicted, simulated, historical or manual, and data the warehouse does not hold is shown as "not available".
+
+**The design, in three layers**
+
+1. **`data.py` only talks to the database.** One function per question, each returning a DataFrame. The connection is opened **read-only**, and a lock held by dbt becomes a clear message instead of a hang:
+
+```python
+def connect(path: str = None):
+    """Open the warehouse READ-ONLY. DuckDB allows one writer: if dbt is running you get a clear error, not a hang."""
+    path = path or DEFAULT_DB
+    if not os.path.exists(path):
+        raise FileNotFoundError(f"Warehouse not found at {path}. Set F1_DUCKDB_PATH or build it with dbt first.")
+    try:
+        return duckdb.connect(path, read_only=True)
+    except duckdb.IOException as exc:
+        raise RuntimeError("The warehouse is locked by another process (probably a dbt run). Retry when it finishes.") from exc
+```
+
+`q(con, sql)` runs a query and returns a DataFrame with floats rounded to six decimals, which removes display noise such as `1e-13`.
+
+2. **`charts/` only draws.** Each function takes a DataFrame and returns a Plotly figure, with no Streamlit and no database, so it can be tested on its own. The package has one module per theme (`circuit`, `performance`, `predictions`, `strategy`, `telemetry`). Here is one, from `charts/strategy.py`:
+
+```python
+def stint_gantt_fig(df: pd.DataFrame, pits: pd.DataFrame = None):
+    if df.empty:
+        return empty("No stint data")
+    d = df.assign(length=df["last_lap"] - df["first_lap"] + 1)
+    fig = go.Figure()
+    for comp, g in d.groupby("tyre_compound"):
+        fig.add_bar(y=g["driver"], x=g["length"], base=g["first_lap"] - 1, orientation="h", name=str(comp),
+                    marker_color=COMPOUND_COLOURS.get(comp, "#888888"),
+                    hovertext=[f"stint {s}: laps {a}-{b}" for s, a, b in zip(g["stint_number"], g["first_lap"], g["last_lap"])])
+    if pits is not None and not pits.empty:
+        fig.add_scatter(x=pits["lap_number"], y=pits["driver"], mode="markers", name="pit stop", marker={"symbol": "line-ns", "size": 18, "color": "#111111", "line": {"width": 3, "color": "#111111"}})
+    fig.update_layout(barmode="overlay", xaxis_title="Lap", yaxis={"autorange": "reversed"})
+    return fig
+```
+
+3. **`workspaces/` and `app.py` only wire them together.** Each page is a `render(con)` function in `workspaces/<role>/<phase>.py`, built from reusable pieces in `components/` (KPIs, timing tower, simulator, filters). `app.py` gives every Streamlit run a **fresh DuckDB cursor**, because one shared connection raised "connection is busy" when reruns overlapped, and registers the pages with `st.navigation`:
+
+```python
+def run_con():
+    """A fresh cursor per script run: one shared DuckDB connection raises 'connection is busy' when reruns overlap."""
+    return con.cursor()
+
+
+def page(module, title, path, **kw):
+    return st.Page(lambda: module.render(run_con()), title=title, url_path=path, **kw)
+```
+
+A page that cannot show something says why instead of drawing an empty chart. The helpers live in `workspaces/_common.py`:
+
+```python
+def need_context(con):
+    plot.reset()
+    ctx = state.current(con)
+    if ctx is None:
+        st.info("No sessions in the warehouse yet. Run the pipeline and `dbt build` first.")
+    return ctx
+```
+
+**How it is tested.** `dashboards/tests/` (104 test cases in two files) runs every workspace page headlessly with Streamlit's `AppTest` against the warehouse built from the synthetic data. Each page must render without an exception; the pages must survive a session with no laps, no telemetry, or a driver who did not start; replay pages must follow the lap slider; pre-race pages must not see the race itself; and the data layer is checked against known fixture answers (season-aware points, sprint typing, served penalties, one row per incident, and so on). A missing warehouse produces a message, not a stack trace.
+
+> **What the tests do not cover.** A test can prove a page renders without raising an error; it cannot tell you whether the layout is readable or the colours are sensible. `docs/CHANGES.md` records fixes made after looking at the pages on real data (for example, Plotly silently switches to WebGL above about 1,000 rows, where lines can fail to draw, so the charts are forced to SVG). Open the app and judge it yourself.
+
+#### **Task 6: A Semantic Layer with MetricFlow (new in the second edition)**
+
+A dashboard, a notebook and a Power BI report can each compute "average lap time" slightly differently (all laps? clean laps only? fuel-corrected?). A **semantic layer** defines each metric **once**, in YAML, and every tool asks for it by name. **MetricFlow** is dbt's implementation, and it runs against DuckDB.
+
+**Step 1: A calendar.** MetricFlow needs a daily calendar to group by time:
+
+```sql
+{{ config(materialized='table') }}
+{# Daily calendar required by MetricFlow for time-based metrics. #}
+SELECT CAST(date_day AS DATE) AS date_day
+FROM ({{ dbt.date_spine('day', "CAST('2023-01-01' AS DATE)", "CAST('2032-01-01' AS DATE)") }}) AS spine
+```
+
+**Step 2: Describe the tables.** A *semantic model* says which columns are **entities** (the keys that let tables join), **dimensions** (what you group by) and **measures** (what you add up or average). Seven tables are described (including `driver_sessions`, the team a driver drove for *at the time of each session*, next to `drivers`, which holds only the latest team), and they share the `session` and `driver` entities, which is what lets you group a lap metric by a driver's name:
+
+```yaml
+version: 2
+
+# Governed business definitions. Query with MetricFlow, e.g.:
+#   mf query --metrics avg_representative_lap_time_seconds --group-by driver__full_name,lap__tyre_compound
+# Joins use shared entities: every fact carries `session` and `driver` foreign entities that resolve to the dimension models.
+
+semantic_models:
+  - name: sessions
+    description: "One row per session (practice, qualifying, sprint, race) with its meeting and circuit."
+    model: ref('dim_sessions')
+    defaults: {agg_time_dimension: session_start_time}
+    entities:
+      - {name: session, type: primary, expr: session_key}
+    dimensions:
+      - {name: session_start_time, type: time, type_params: {time_granularity: day}}
+      - {name: session_type, type: categorical}
+      - {name: session_name, type: categorical}
+      - {name: season, type: categorical, expr: year}
+      - {name: location, type: categorical}
+      - {name: circuit_short_name, type: categorical}
+      - {name: country_code, type: categorical}
+    measures:
+      - {name: session_count, expr: "1", agg: sum}
+
+  - name: drivers
+    description: "Latest known identity and team per driver number. For historical analysis use `driver_sessions` (team at the time of the session)."
+    model: ref('dim_drivers')
+    entities:
+      - {name: driver, type: primary, expr: driver_number}
+    dimensions:
+      - {name: full_name, type: categorical}
+      - {name: driver_acronym, type: categorical}
+      - {name: team_name, type: categorical}
+
+  - name: driver_sessions
+    description: "Driver identity and team AS OF each session (keeps mid-season team changes). Prefer this over `drivers` for any historical analysis."
+    model: ref('dim_driver_session')
+    entities:
+      - {name: driver_session, type: primary, expr: "CONCAT(CAST(session_key AS VARCHAR), '-', CAST(driver_number AS VARCHAR))"}
+      - {name: session, type: foreign, expr: session_key}
+      - {name: driver, type: foreign, expr: driver_number}
+    dimensions:
+      - {name: session_driver_name, type: categorical, expr: full_name}
+      - {name: session_driver_acronym, type: categorical, expr: driver_acronym}
+      - {name: session_team_name, type: categorical, expr: team_name}
+
+  - name: laps
+    description: "One row per driver per lap with tyre, track status and pace flags."
+    model: ref('fct_lap_performance')
+    defaults: {agg_time_dimension: lap_start_ts}
+    entities:
+      - {name: lap, type: primary, expr: "CONCAT(CAST(session_key AS VARCHAR), '-', CAST(driver_number AS VARCHAR), '-', CAST(lap_number AS VARCHAR))"}
+      - {name: session, type: foreign, expr: session_key}
+      - {name: driver, type: foreign, expr: driver_number}
+    dimensions:
+      - {name: lap_start_ts, type: time, type_params: {time_granularity: day}}
+      - {name: tyre_compound, type: categorical}
+      - {name: track_status, type: categorical}
+      - {name: is_representative_lap, type: categorical}
+      - {name: stint_number, type: categorical}
+    measures:
+      - {name: lap_count, expr: "1", agg: sum}
+      - {name: lap_time_sum, expr: lap_time_seconds, agg: sum}
+      - {name: lap_time_avg, expr: lap_time_seconds, agg: average}
+      - {name: lap_time_best, expr: lap_time_seconds, agg: min}
+      - {name: fuel_corrected_lap_time_avg, expr: fuel_corrected_lap_time_seconds, agg: average}
+      - {name: speed_trap_max, expr: speed_trap_finish, agg: max}
+
+  - name: pit_stops
+    description: "One row per pit stop."
+    model: ref('fct_pit_stops')
+    defaults: {agg_time_dimension: pit_timestamp}
+    entities:
+      - {name: pit_stop, type: primary, expr: "CONCAT(CAST(session_key AS VARCHAR), '-', CAST(driver_number AS VARCHAR), '-', CAST(stop_number AS VARCHAR))"}
+      - {name: session, type: foreign, expr: session_key}
+      - {name: driver, type: foreign, expr: driver_number}
+    dimensions:
+      - {name: pit_timestamp, type: time, type_params: {time_granularity: day}}
+      - {name: compound_after, type: categorical}
+      - {name: is_under_neutralisation, type: categorical}
+    measures:
+      - {name: stop_count, expr: "1", agg: sum}
+      - {name: pit_lane_time_avg, expr: pit_lane_time_seconds, agg: average}
+      - {name: time_lost_avg, expr: time_lost_seconds, agg: average}
+      - {name: slow_stops, expr: "CASE WHEN is_slow_stop THEN 1 ELSE 0 END", agg: sum}
+
+  - name: race_results
+    description: "One row per driver per classified session."
+    model: ref('fct_race_results')
+    defaults: {agg_time_dimension: session_start_time}
+    entities:
+      - {name: result, type: primary, expr: "CONCAT(CAST(session_key AS VARCHAR), '-', CAST(driver_number AS VARCHAR))"}
+      - {name: session, type: foreign, expr: session_key}
+      - {name: driver, type: foreign, expr: driver_number}
+    dimensions:
+      - {name: session_start_time, type: time, type_params: {time_granularity: day}}
+      - {name: result_session_type, type: categorical, expr: session_type}
+      - {name: classification_status, type: categorical}
+    measures:
+      - {name: points, expr: total_points, agg: sum}
+      - {name: wins, expr: "CASE WHEN is_winner THEN 1 ELSE 0 END", agg: sum}
+      - {name: podiums, expr: "CASE WHEN is_podium THEN 1 ELSE 0 END", agg: sum}
+      - {name: dnfs, expr: "CASE WHEN classification_status = 'DNF' THEN 1 ELSE 0 END", agg: sum}
+      - {name: starts, expr: "1", agg: sum}
+      - {name: places_gained, expr: positions_gained_or_lost, agg: sum}
+
+  - name: overtakes
+    description: "One row per overtake event."
+    model: ref('fct_overtakes')
+    defaults: {agg_time_dimension: overtake_timestamp}
+    entities:
+      - {name: overtake, type: primary, expr: "CONCAT(CAST(session_key AS VARCHAR), '-', CAST(overtaking_driver_number AS VARCHAR), '-', CAST(overtaken_driver_number AS VARCHAR), '-', CAST(overtake_timestamp AS VARCHAR))"}
+      - {name: session, type: foreign, expr: session_key}
+      - {name: driver, type: foreign, expr: overtaking_driver_number}
+    dimensions:
+      - {name: overtake_timestamp, type: time, type_params: {time_granularity: day}}
+      - {name: is_probable_pit_cycle_pass, type: categorical}
+      - {name: overtake_track_status, type: categorical, expr: track_status}
+    measures:
+      - {name: overtake_events, expr: "1", agg: sum}
+      - {name: on_track_overtakes, expr: "CASE WHEN NOT is_probable_pit_cycle_pass THEN 1 ELSE 0 END", agg: sum}
+      - {name: drs_assisted_overtakes, expr: "CASE WHEN was_in_drs_range_before_pass THEN 1 ELSE 0 END", agg: sum}
+```
+
+**Step 3: Define the metrics.** A metric is a measure plus an optional filter, or a ratio of two metrics. Note that `avg_lap_time_seconds` and `avg_representative_lap_time_seconds` are *different, named, described metrics*: the difference is now a decision recorded in one file.
+
+```yaml
+version: 2
+
+metrics:
+  # ---- pace ----
+  - name: laps_driven
+    label: Laps driven
+    type: simple
+    type_params: {measure: lap_count}
+  - name: avg_lap_time_seconds
+    label: Average lap time (all laps)
+    description: "Includes in/out/safety-car laps. For pace comparisons use avg_representative_lap_time_seconds."
+    type: simple
+    type_params: {measure: lap_time_avg}
+  - name: avg_representative_lap_time_seconds
+    label: Average representative lap time
+    description: "Clean laps only (no first/in/out/yellow/SC/VSC/red, within the representative-lap threshold)."
+    type: simple
+    type_params: {measure: lap_time_avg}
+    filter: "{{ Dimension('lap__is_representative_lap') }} = true"
+  - name: avg_fuel_corrected_representative_lap_time_seconds
+    label: Average fuel-corrected representative lap time
+    description: "Fuel correction rests on the var fuel_effect_seconds_per_lap assumption."
+    type: simple
+    type_params: {measure: fuel_corrected_lap_time_avg}
+    filter: "{{ Dimension('lap__is_representative_lap') }} = true"
+  - name: best_lap_time_seconds
+    label: Best lap time
+    type: simple
+    type_params: {measure: lap_time_best}
+  - name: top_speed_trap_kph
+    label: Top speed-trap reading (km/h)
+    type: simple
+    type_params: {measure: speed_trap_max}
+  # ---- pit stops ----
+  - name: pit_stops
+    label: Pit stops
+    type: simple
+    type_params: {measure: stop_count}
+  - name: avg_pit_lane_time_seconds
+    label: Average pit lane time (s)
+    description: "Pit entry to exit as reported by OpenF1; NOT stationary time."
+    type: simple
+    type_params: {measure: pit_lane_time_avg}
+  - name: avg_green_flag_time_lost_seconds
+    label: Average time lost per green-flag stop (s)
+    type: simple
+    type_params: {measure: time_lost_avg}
+    filter: "{{ Dimension('pit_stop__is_under_neutralisation') }} = false"
+  - name: slow_stop_rate
+    label: Share of stops flagged slow
+    type: ratio
+    type_params: {numerator: slow_stops_total, denominator: pit_stops}
+  - name: slow_stops_total
+    label: Slow stops
+    type: simple
+    type_params: {measure: slow_stops}
+  # ---- results ----
+  - name: championship_points
+    label: Points scored
+    type: simple
+    type_params: {measure: points}
+  - name: race_wins
+    label: Wins
+    type: simple
+    type_params: {measure: wins}
+  - name: podium_finishes
+    label: Podiums
+    type: simple
+    type_params: {measure: podiums}
+  - name: retirements
+    label: DNFs
+    type: simple
+    type_params: {measure: dnfs}
+  - name: race_starts
+    label: Classified entries
+    type: simple
+    type_params: {measure: starts}
+  - name: points_per_start
+    label: Points per start
+    type: ratio
+    type_params: {numerator: championship_points, denominator: race_starts}
+  - name: net_places_gained
+    label: Net places gained vs grid
+    type: simple
+    type_params: {measure: places_gained}
+  # ---- overtaking ----
+  - name: overtakes
+    label: Overtakes (all)
+    type: simple
+    type_params: {measure: overtake_events}
+  - name: on_track_overtakes
+    label: On-track overtakes (excl. probable pit-cycle)
+    type: simple
+    type_params: {measure: on_track_overtakes}
+  - name: drs_assisted_overtake_share
+    label: Share of overtakes made from DRS range
+    type: ratio
+    type_params: {numerator: drs_assisted_total, denominator: overtakes}
+  - name: drs_assisted_total
+    label: DRS-assisted overtakes
+    type: simple
+    type_params: {measure: drs_assisted_overtakes}
+```
+
+**Step 4: Validate and query.**
+
+```bash
+pip install dbt-metricflow
+cd dbt_f1_transformations
+dbt build --select metricflow_time_spine
+mf validate-configs
+mf query --metrics avg_representative_lap_time_seconds --group-by driver__full_name
+mf query --metrics championship_points,race_wins --group-by driver__full_name
+```
+
+`make semantic-validate` runs the validation and then `ci/semantic_check.py`, which executes seven metrics through MetricFlow and compares **each result with an independent, hand-written SQL query**. Validation proves the YAML is well-formed; the cross-check proves the metrics mean what their names say, including the two **ratio** metrics and a metric grouped through the `session` entity.
+
+> **MetricFlow and the single writer.** `mf query` opens the DuckDB file for writing, so it cannot run while Harlequin, DBeaver or another process holds it. The cross-check script therefore runs all its MetricFlow queries *first* and opens the file for its own SQL afterwards.
 
 ### **Learner Pitfalls & Troubleshooting**
 
@@ -3317,6 +6143,22 @@ This is the full story, in order, because every step teaches something.
 * **Why it Happens:** a tool opened the file read-write.
 * **The Solution:** open read-only, or disconnect before running dbt.
 
+* **The Problem (second edition, hit on the author's machine):** `make dashboard` crashes with a long traceback ending in a `CatalogException` about a missing table (for example `dim_driver_session` or `fct_radio_messages`).
+* **Why it Happens:** the warehouse had not been fully built, most likely because `dbt build` had stopped at the DuckDB 1.5 error described in Chapter 5, so the tables the page needs never existed. The dashboard was working correctly and the warehouse was incomplete.
+* **The Solution:** fix the build first. The pages now catch a missing table and say which one and what to run (`dbt build`, and `--vars '{enable_radio_transcripts: true}'` for the radio page) instead of showing a traceback.
+
+* **The Problem (second edition, found by the tests):** Streamlit warns that `use_container_width` will be removed after 2025-12-31.
+* **Why it Happens:** Streamlit replaced that argument with `width="stretch"`. The date has passed, so code still using the old argument is on borrowed time.
+* **The Solution:** use `width="stretch"` everywhere and require Streamlit 1.50 or newer (`dashboards/requirements.txt`).
+
+* **The Problem (second edition, found by validation):** MetricFlow warns `Invalid name year - names cannot match reserved time granularity keywords`.
+* **Why it Happens:** `year`, `month`, `day` and the like are time-granularity keywords, and MetricFlow reserves them as names. A dimension called `year` clashes.
+* **The Solution:** name it differently and point at the column with `expr`: `{name: season, type: categorical, expr: year}`.
+
+* **The Problem (second edition):** `mf query` fails with `Could not set lock on file ...duckdb: Conflicting lock is held`.
+* **Why it Happens:** DuckDB allows one writer, and another tool (or your own script) has the file open.
+* **The Solution:** close the other connection, or order your own scripts so every `mf` call finishes before you open the file.
+
 ---
 
 
@@ -3326,7 +6168,7 @@ This is the full story, in order, because every step teaches something.
 
 Clicking around a cloud console builds infrastructure nobody can reproduce. **Infrastructure as Code (IaC)** describes servers and storage in text files you can version, review and rebuild. In this chapter you write the OpenTofu configuration for the project's **cloud data lake** on Google Cloud Storage.
 
-**Status.** `tofu init` and `tofu plan` are **[VERIFIED]** in the build logs. The logs end before `tofu apply` is confirmed, and BigQuery datasets, Cloud Composer and Cloud Run are **[SCAFFOLDED]** (named in the plan, with no configuration).
+**Status.** `tofu init` and `tofu plan` are **[VERIFIED]** in the build logs. The logs end before `tofu apply` is confirmed. The second edition adds BigQuery datasets to the configuration (**[CODE FINAL, RUN NOT CONFIRMED]**: no `tofu` binary was available to validate it) and, in Tasks 4 to 7, a **BigQuery port of the whole dbt project**, **[VERIFIED ON SYNTHETIC DATA]** on a BigQuery *emulator* (every table identical to its DuckDB twin) but never run on real BigQuery. Cloud Composer is still **[SCAFFOLDED]**.
 
 **Concepts introduced in this chapter**
 
@@ -3336,6 +6178,8 @@ Clicking around a cloud console builds infrastructure nobody can reproduce. **In
 * **Variable and `terraform.tfvars`:** inputs to the configuration, and the file that supplies them.
 * **Plan versus apply:** `plan` previews changes and changes nothing; `apply` makes them.
 * **State:** a record of what OpenTofu has created. Never commit it.
+* **Dialect:** the flavour of SQL an engine speaks. DuckDB and BigQuery both speak "SQL" but differ in many small ways; making a project run on both is called making it **portable**.
+* **Emulator:** a local program that imitates a cloud service closely enough to test against, without an account or a bill. It is a substitute, not the real thing.
 
 ### **Prerequisites**
 
@@ -3380,13 +6224,13 @@ In **opentofu/variables.tf**:
 variable "gcp_project_id" {
   description = "The ID of your Google Cloud project"
   type        = string
-  # No default, so the value is supplied explicitly
+  # We will leave this without a default so you can pass it in securely
 }
 
 variable "gcp_region" {
   description = "The GCP region to deploy resources to"
   type        = string
-  default     = "us-central1"
+  default     = "us-central1" # Feel free to change this to a region closer to you
 }
 
 variable "gcp_zone" {
@@ -3394,26 +6238,59 @@ variable "gcp_zone" {
   type        = string
   default     = "us-central1-a"
 }
+
+variable "bigquery_location" {
+  description = "Location for the BigQuery datasets (multi-region 'US'/'EU' or a region)"
+  type        = string
+  default     = "US"
+}
 ```
 
-In **opentofu/main.tf**:
+In **opentofu/main.tf** (the bucket from the first edition, plus three **BigQuery datasets** for the cloud warehouse in Tasks 4 to 7):
 
 ```hcl
 resource "google_storage_bucket" "data_lake" {
-  # Bucket names are globally unique, so the project ID is appended
-  name     = "falcon-fleet-f1-data-lake-${var.gcp_project_id}"
-  location = var.gcp_region
+  # Bucket names must be globally unique across all of Google Cloud
+  # We append your project ID to ensure it doesn't clash with anyone else
+  name          = "falcon-fleet-f1-data-lake-${var.gcp_project_id}"
+  location      = var.gcp_region
+  
+  # This allows OpenTofu to delete the bucket later even if it has files inside it
+  # (Great for dev environments, but you'd turn this off in production!)
+  force_destroy = true 
 
-  # Lets OpenTofu delete a non-empty bucket. Fine for development,
-  # turn it off in production.
-  force_destroy = true
-
+  # Best practice for modern GCP buckets
   uniform_bucket_level_access = true
 }
 
+# Let's output the bucket name so OpenTofu tells us what it created
 output "data_lake_bucket_name" {
   value       = google_storage_bucket.data_lake.name
   description = "The name of the F1 data lake bucket"
+}
+
+# ---------------------------------------------------------------------------
+# BigQuery datasets for a future cloud warehouse (raw landing, staging, marts).
+# NOT yet applied, and the dbt models are not BigQuery-portable as-is (they use DuckDB-only SQL such as
+# ASOF JOIN, read_parquet and json_extract_string). See README "Cloud roadmap".
+# ---------------------------------------------------------------------------
+resource "google_bigquery_dataset" "layers" {
+  for_each   = toset(["f1_raw", "f1_staging", "f1_marts"])
+  dataset_id = each.key
+  location   = var.bigquery_location
+
+  # Safe default for a learning project; set to false before storing anything you cannot rebuild.
+  delete_contents_on_destroy = true
+
+  labels = {
+    project = "f1-data-project"
+    layer   = replace(each.key, "f1_", "")
+  }
+}
+
+output "bigquery_datasets" {
+  value       = [for d in google_bigquery_dataset.layers : d.dataset_id]
+  description = "BigQuery datasets created for the cloud warehouse"
 }
 ```
 
@@ -3434,15 +6311,342 @@ tofu apply      # type "yes" to create the bucket
 
 **Commit `.terraform.lock.hcl`** so everyone gets the same provider version. Do **not** commit `*.tfstate` or the `.terraform/` folder (the `.gitignore` from Chapter 1 already excludes them).
 
-#### **Task 4: Where the Cloud Pieces Go Next (Planned)**
+#### **Task 4: Load the Raw Data into BigQuery (new in the second edition)**
 
-The project's design points to these steps, none of which has working code in the logs:
+The first edition listed "BigQuery as a cloud warehouse" as a planned step. It is now built, starting with getting the raw Parquet into BigQuery tables. DuckDB reads many Parquet files as one table and reconciles their types with `union_by_name`. **A BigQuery column has exactly one type**, so the `+1 LAP`-versus-number drift from Chapter 9 comes back, and it must be reconciled *before* loading. `scripts/load_raw_to_bigquery.py` does that:
 
-* **`gcs_loader.py`:** upload Parquet from `airflow/data/raw` to the bucket.
-* **BigQuery** as a cloud warehouse with `dbt-bigquery` replacing `dbt-duckdb` in a new profile target.
-* **Cloud Composer** (managed Airflow) running the same DAGs.
+```python
+#!/usr/bin/env python3
+"""
+Load the extractor's raw Parquet files into BigQuery, one table per endpoint (dataset f1_raw by default).
 
-Each is an extension exercise. Because the local pipeline is already modular (sources, staging, marts), swapping the warehouse mostly means changing `sources.yml` and the profile, plus any DuckDB-specific SQL such as `ASOF JOIN` that BigQuery does not support in the same form.
+  python scripts/load_raw_to_bigquery.py --raw-dir airflow/data/raw --project my-project [--dataset f1_raw]
+  python scripts/load_raw_to_bigquery.py ... --emulator http://localhost:9050     # local BigQuery emulator, no credentials
+
+WHY THIS EXISTS: DuckDB reads many Parquet files with union_by_name and reconciles types. A BigQuery table has ONE type per
+column, so cross-file drift (a number in one session's file, a '+1 LAP' string in another) must be reconciled BEFORE loading.
+Rules: identical types stay; int + float -> FLOAT64; null-only columns adopt the other files' type; anything else -> STRING.
+Each endpoint is fully re-loaded (WRITE_TRUNCATE), so re-running is idempotent. Files under _manifests/ are ignored.
+"""
+import argparse
+import glob
+import io
+import os
+import re
+import sys
+from collections import defaultdict
+
+import pyarrow as pa
+import pyarrow.parquet as pq
+
+FILE_RE = re.compile(r"^(?P<endpoint>.+)_(?P<session>\d+|global)_extracted\.parquet$")
+
+
+def unify_types(types):
+    """Pick one Arrow type from the types a column has across files."""
+    real = [t for t in types if not pa.types.is_null(t)]
+    if not real:
+        return pa.string()
+    if all(t == real[0] for t in real):
+        return real[0]
+    if all(pa.types.is_integer(t) or pa.types.is_floating(t) for t in real):
+        return pa.float64()
+    return pa.string()
+
+
+def unified_schema(tables):
+    cols = defaultdict(list)
+    order = []
+    for t in tables:
+        for f in t.schema:
+            if f.name not in cols:
+                order.append(f.name)
+            cols[f.name].append(f.type)
+    return pa.schema([(n, unify_types(cols[n])) for n in order])
+
+
+def conform(table: pa.Table, schema: pa.Schema) -> pa.Table:
+    arrays = []
+    for f in schema:
+        if f.name not in table.column_names:
+            arrays.append(pa.nulls(table.num_rows, f.type))
+            continue
+        col = table[f.name]
+        if col.type == f.type:
+            arrays.append(col)
+        elif pa.types.is_string(f.type):
+            arrays.append(pa.array([None if v is None else str(v) for v in col.to_pylist()], type=pa.string()))
+        else:
+            arrays.append(col.cast(f.type))
+    return pa.Table.from_arrays(arrays, schema=schema)
+
+
+def combine_endpoint(files):
+    tables = [pq.read_table(f) for f in files]
+    schema = unified_schema(tables)
+    return pa.concat_tables([conform(t, schema) for t in tables])
+
+
+def group_files(raw_dir):
+    groups = defaultdict(list)
+    for f in sorted(glob.glob(os.path.join(raw_dir, "*_extracted.parquet"))):
+        m = FILE_RE.match(os.path.basename(f))
+        if m:
+            groups[m.group("endpoint")].append(f)
+    return groups
+
+
+def make_client(project, emulator=None):
+    from google.cloud import bigquery
+    if emulator:
+        from google.api_core.client_options import ClientOptions
+        from google.auth.credentials import AnonymousCredentials
+        return bigquery.Client(project=project, credentials=AnonymousCredentials(), client_options=ClientOptions(api_endpoint=emulator))
+    return bigquery.Client(project=project)
+
+
+BQ_TYPES = {pa.types.is_integer: "INT64", pa.types.is_floating: "FLOAT64", pa.types.is_boolean: "BOOL"}
+
+
+def bq_type(t):
+    for pred, name in BQ_TYPES.items():
+        if pred(t):
+            return name
+    return "STRING"
+
+
+def load(client, dataset, endpoint, table: pa.Table, fmt="parquet"):
+    from google.cloud import bigquery
+    ref = f"{client.project}.{dataset}.{endpoint}"
+    if fmt == "parquet":
+        buf = io.BytesIO(); pq.write_table(table, buf, compression="snappy"); buf.seek(0)
+        job = client.load_table_from_file(buf, ref, job_config=bigquery.LoadJobConfig(
+            source_format=bigquery.SourceFormat.PARQUET, write_disposition="WRITE_TRUNCATE"))
+    else:  # newline-delimited JSON with an explicit schema (for backends without Parquet load support)
+        import json
+        schema = [bigquery.SchemaField(f.name, bq_type(f.type)) for f in table.schema]
+        buf = io.BytesIO("\n".join(json.dumps(r, default=str) for r in table.to_pylist()).encode())
+        job = client.load_table_from_file(buf, ref, job_config=bigquery.LoadJobConfig(
+            source_format=bigquery.SourceFormat.NEWLINE_DELIMITED_JSON, schema=schema, write_disposition="WRITE_TRUNCATE"))
+    job.result()
+    return client.get_table(ref).num_rows
+
+
+def main(argv=None):
+    ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    ap.add_argument("--raw-dir", required=True); ap.add_argument("--project", required=True)
+    ap.add_argument("--dataset", default="f1_raw"); ap.add_argument("--emulator", help="e.g. http://localhost:9050")
+    ap.add_argument("--format", choices=["parquet", "json"], default="parquet"); ap.add_argument("--location", default="US")
+    a = ap.parse_args(argv)
+    from google.cloud import bigquery
+    client = make_client(a.project, a.emulator)
+    from google.api_core.exceptions import NotFound
+    try:
+        client.get_dataset(f"{a.project}.{a.dataset}")
+    except NotFound:
+        client.create_dataset(bigquery.Dataset(f"{a.project}.{a.dataset}"))
+    groups = group_files(a.raw_dir)
+    if not groups:
+        sys.exit(f"No *_extracted.parquet files under {a.raw_dir}")
+    for endpoint, files in sorted(groups.items()):
+        table = combine_endpoint(files)
+        print(f"{endpoint:24s} {len(files):3d} file(s) -> {load(client, a.dataset, endpoint, table, a.format):>8,} rows")
+
+
+if __name__ == "__main__":
+    main()
+```
+
+```bash
+python scripts/load_raw_to_bigquery.py --raw-dir airflow/data/raw --project my-gcp-project
+```
+
+**The rules for reconciling types:** identical types stay as they are; an integer in one file and a float in another becomes `FLOAT64`; a column that is entirely empty in some files takes the type from the others; **anything else becomes `STRING`**, which loses no data (a `+1 LAP` stays `+1 LAP`) and which the dbt staging models already cast with `SAFE_CAST`. Each endpoint is reloaded in full (`WRITE_TRUNCATE`), so re-running is idempotent. The file-name pattern keeps multi-word endpoints intact (`session_result`, not `session`) and ignores `_manifests/`.
+
+#### **Task 5: Make the SQL Portable (new in the second edition)**
+
+The models used DuckDB-only syntax in many places. Rather than keep two copies of every model, the project calls **macros** that write the right SQL for the current engine. They live in `macros/portable.sql`, and the dialect is read from `target.type`:
+
+```jinja
+{#
+  Cross-database SQL helpers. DuckDB is the default dialect (`default__`); BigQuery overrides are `bigquery__`.
+  Models call these instead of writing DuckDB-only syntax directly (TRY_CAST, epoch(), REGR_SLOPE, MEDIAN, ASOF JOIN,
+  FILTER (WHERE ...), LIST(), json_extract_string, regexp_extract, BOOL_OR, ARG_MAX).
+  Dialect is `target.type`, overridable with --vars '{f1_dialect: bigquery}' for compile-only checks.
+#}
+{% macro f1_dialect() %}{{ return(var('f1_dialect', target.type)) }}{% endmacro %}
+{% macro f1_is_bq() %}{{ return(f1_dialect() == 'bigquery') }}{% endmacro %}
+
+{# ---- types & casts ---- #}
+{% macro f1_type(dtype) %}
+  {%- set bq = {'int': 'INT64', 'double': 'FLOAT64', 'string': 'STRING', 'timestamp': 'TIMESTAMP', 'bool': 'BOOL'} -%}
+  {%- set dd = {'int': 'INTEGER', 'double': 'DOUBLE', 'string': 'VARCHAR', 'timestamp': 'TIMESTAMP', 'bool': 'BOOLEAN'} -%}
+  {{- bq[dtype] if f1_is_bq() else dd[dtype] -}}
+{% endmacro %}
+{% macro f1_try_cast_fn() %}{{ 'SAFE_CAST' if f1_is_bq() else 'TRY_CAST' }}{% endmacro %}
+{% macro f1_cast(expr, dtype) %}CAST({{ expr }} AS {{ f1_type(dtype) }}){% endmacro %}
+{% macro f1_try_cast(expr, dtype) %}{{ 'SAFE_CAST' if f1_is_bq() else 'TRY_CAST' }}({{ expr }} AS {{ f1_type(dtype) }}){% endmacro %}
+
+{# ---- time ---- #}
+{% macro f1_seconds_between(start_ts, end_ts) %}
+  {%- if f1_is_bq() -%}TIMESTAMP_DIFF({{ end_ts }}, {{ start_ts }}, MICROSECOND) / 1000000.0
+  {%- else -%}epoch({{ end_ts }} - {{ start_ts }}){%- endif -%}
+{% endmacro %}
+{% macro f1_ts_add_seconds(ts, secs) %}
+  {%- if f1_is_bq() -%}TIMESTAMP_ADD({{ ts }}, INTERVAL CAST(ROUND(({{ secs }}) * 1000000) AS INT64) MICROSECOND)
+  {%- else -%}({{ ts }} + ({{ secs }}) * INTERVAL 1 SECOND){%- endif -%}
+{% endmacro %}
+{% macro f1_epoch_us(ts) %}{{ 'UNIX_MICROS' if f1_is_bq() else 'epoch_us' }}({{ ts }}){% endmacro %}
+{% macro f1_epoch_ms(ts) %}{{ 'UNIX_MILLIS' if f1_is_bq() else 'epoch_ms' }}({{ ts }}){% endmacro %}
+
+{# ---- aggregates / windows ---- #}
+{% macro f1_median_over(expr, partition_by) %}
+  {%- if f1_is_bq() -%}PERCENTILE_CONT({{ expr }}, 0.5) OVER (PARTITION BY {{ partition_by }})
+  {%- else -%}MEDIAN({{ expr }}) OVER (PARTITION BY {{ partition_by }}){%- endif -%}
+{% endmacro %}
+{# y, x must already be NULL-masked identically by the caller (CASE WHEN keep THEN value END for both). #}
+{% macro f1_regr_slope(y, x) %}
+  {%- if f1_is_bq() -%}SAFE_DIVIDE(COVAR_POP({{ y }}, {{ x }}), VAR_POP({{ x }})){%- else -%}REGR_SLOPE({{ y }}, {{ x }}){%- endif -%}
+{% endmacro %}
+{% macro f1_regr_intercept(y, x) %}
+  {%- if f1_is_bq() -%}(AVG({{ y }}) - SAFE_DIVIDE(COVAR_POP({{ y }}, {{ x }}), VAR_POP({{ x }})) * AVG({{ x }}))
+  {%- else -%}REGR_INTERCEPT({{ y }}, {{ x }}){%- endif -%}
+{% endmacro %}
+{% macro f1_r2(y, x) %}POWER(CORR({{ y }}, {{ x }}), 2){% endmacro %}
+{% macro f1_list_agg(expr, order_by) %}{{ 'ARRAY_AGG' if f1_is_bq() else 'LIST' }}({{ expr }} ORDER BY {{ order_by }}){% endmacro %}
+{% macro f1_bool_or(expr) %}{{ 'LOGICAL_OR' if f1_is_bq() else 'BOOL_OR' }}({{ expr }}){% endmacro %}
+{% macro f1_arg_max(value, by) %}
+  {%- if f1_is_bq() -%}ARRAY_AGG({{ value }} ORDER BY {{ by }} DESC LIMIT 1)[OFFSET(0)]
+  {%- else -%}ARG_MAX({{ value }}, {{ by }}){%- endif -%}
+{% endmacro %}
+{% macro f1_json_scalar(expr, path) %}
+  {%- if f1_is_bq() -%}JSON_EXTRACT_SCALAR({{ expr }}, '{{ path }}'){%- else -%}json_extract_string({{ expr }}, '{{ path }}'){%- endif -%}
+{% endmacro %}
+{# pattern is a plain regex with ONE capture group; returns that group (or NULL). #}
+{% macro f1_regexp_extract(expr, pattern) %}
+  {%- if f1_is_bq() -%}REGEXP_EXTRACT({{ expr }}, r'{{ pattern }}')
+  {%- else -%}NULLIF(regexp_extract({{ expr }}, '{{ pattern }}', 1), ''){%- endif -%}
+{% endmacro %}
+
+{#
+  ASOF LEFT JOIN: attach to every `left` row the latest `right` row with the same keys and right_ts <= left_ts.
+    left / right : relation or CTE names
+    on           : equality key column names (must exist in BOTH, and be in left_cols)
+    left_cols    : left columns to carry through (include the keys)
+    right_cols   : right columns to attach, either 'col' or 'col AS alias'
+  DuckDB uses its native ASOF JOIN. BigQuery has none, so the same result is built in LINEAR time by merging both
+  sides onto one timeline, carrying the latest right-side timestamp forward with a running MAX over integer microseconds,
+  then joining back to the right table on (keys, that timestamp). This keeps legitimately-NULL right values intact and works
+  on engines without LAST_VALUE ... IGNORE NULLS. Right rows win ties (right_ts = left_ts). Right rows are de-duplicated
+  per (keys, right_ts) first, so duplicate readings cannot multiply left rows.
+#}
+{% macro f1_asof_join(left, right, on, left_ts, right_ts, left_cols, right_cols) %}
+  {%- set rc = [] -%}
+  {%- for c in right_cols -%}
+    {%- set parts = c.split(' AS ') if ' AS ' in c else [c, c] -%}
+    {%- do rc.append({'src': parts[0] | trim, 'alias': parts[1] | trim}) -%}
+  {%- endfor -%}
+  {%- if f1_is_bq() -%}
+    SELECT
+      {% for c in left_cols %}m.{{ c }},{% endfor %}
+      {% for r in rc %}r.{{ r.src }} AS {{ r.alias }}{{ ',' if not loop.last }}{% endfor %}
+    FROM (
+      SELECT
+        {% for c in left_cols %}{{ c }},{% endfor %} _side,
+        MAX(CASE WHEN _side = 1 THEN _ts END) OVER (
+          PARTITION BY {{ on | join(', ') }} ORDER BY _ts, _side DESC
+          ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW
+        ) AS _last_ts
+      FROM (
+        SELECT 0 AS _side, {% for c in left_cols %}{{ c }},{% endfor %} UNIX_MICROS({{ left_ts }}) AS _ts
+        FROM {{ left }}
+        UNION ALL
+        SELECT 1 AS _side, {% for c in left_cols %}{{ c if c in on else 'NULL' }} AS {{ c }},{% endfor %} UNIX_MICROS({{ right_ts }}) AS _ts
+        FROM {{ right }}
+        WHERE {{ right_ts }} IS NOT NULL
+      )
+    ) m
+    LEFT JOIN (
+      SELECT * EXCEPT (_rn) FROM (
+        SELECT *, ROW_NUMBER() OVER (PARTITION BY {{ on | join(', ') }}, {{ right_ts }} ORDER BY {{ right_ts }}) AS _rn
+        FROM {{ right }}
+      ) WHERE _rn = 1
+    ) r
+      ON {% for k in on %}r.{{ k }} = m.{{ k }} AND {% endfor %}UNIX_MICROS(r.{{ right_ts }}) = m._last_ts
+    WHERE m._side = 0
+  {%- else -%}
+    SELECT
+      {% for c in left_cols %}l.{{ c }},{% endfor %}
+      {% for r in rc %}r.{{ r.src }} AS {{ r.alias }}{{ ',' if not loop.last }}{% endfor %}
+    FROM {{ left }} l
+    ASOF LEFT JOIN {{ right }} r
+      ON {% for k in on %}l.{{ k }} = r.{{ k }} AND {% endfor %}l.{{ left_ts }} >= r.{{ right_ts }}
+  {%- endif -%}
+{% endmacro %}
+```
+
+**What had to change, and why** (each item was found by running the project on BigQuery and comparing with DuckDB):
+
+| DuckDB-only construct | Problem on BigQuery | Replacement |
+|---|---|---|
+| `AGG(x) FILTER (WHERE c)` | not supported | `AGG(CASE WHEN c THEN x END)`, which means the same everywhere |
+| `TRY_CAST`, `INTEGER`, `DOUBLE`, `VARCHAR` | different names | `f1_try_cast_fn()`, `f1_type('int')` and friends |
+| `epoch(a - b)`, `ts + n * INTERVAL 1 SECOND` | different time arithmetic | `f1_seconds_between`, `f1_ts_add_seconds` |
+| `MEDIAN(x)` (grouped) | no exact grouped median; `APPROX_QUANTILES` is only approximate | a window `PERCENTILE_CONT`, then `MAX` of it |
+| `REGR_SLOPE`, `REGR_INTERCEPT` | not available | covariance divided by variance |
+| `LIST(...)`, `BOOL_OR`, `ARG_MAX` | other names | `ARRAY_AGG`, `LOGICAL_OR`, an ordered `ARRAY_AGG` |
+| `json_extract_string`, `regexp_extract` | other names and argument shapes | `f1_json_scalar`, `f1_regexp_extract` |
+| `DEGREES(x)` | **the function does not exist** | `x * 180 / ACOS(-1)` |
+| `LEAST(60, NULL)` | DuckDB returns **60**, BigQuery returns **NULL** | `LEAST(60, COALESCE(x, 60))` |
+| `STRING_AGG(DISTINCT x, ', ')` | the order is unspecified, so engines differ | `... ORDER BY x` |
+| `SELECT <expr of a>, ... GROUP BY <alias of another expr>` | DuckDB accepts it, BigQuery rejects it | compute the bin in its own CTE |
+| `"interval"` | `interval` is a reserved word and `"..."` is a *string* in BigQuery | `adapter.quote('interval')` |
+| `ASOF JOIN` | does not exist | see below |
+| `BIGINT` casts of join keys | (DuckDB 1.5's optimizer crash, Chapter 5) | explicit `CAST(... AS BIGINT)` in `dim_drivers` and `dim_driver_session`; `f1_type('int')` is `INTEGER` on DuckDB and `INT64` on BigQuery |
+| `append` incremental strategy | not offered | `insert_overwrite`, partitioned (Task 7) |
+
+**The ASOF join without `ASOF JOIN`.** "Attach the latest right-hand row at or before each left-hand time" can be done in linear time without a native operator: put left and right rows on **one timeline**, sort by time, carry the **latest right-hand timestamp** forward with a running `MAX` over integer microseconds, then join back to the right table on *(keys, that timestamp)*. Right rows sort before left rows at equal times, so a reading at exactly the same instant counts. A legitimately `NULL` right-hand value survives, because the join returns the whole right row and not a "last non-null value". This formulation was the **second attempt**: the first used `LAST_VALUE(... IGNORE NULLS)`, which real BigQuery supports but which the emulator silently ignored (it returned `NULL` for everything, see the pitfall below). The shipped version works on both, and right-hand rows are de-duplicated per `(keys, timestamp)` first so a duplicated reading cannot multiply left rows.
+
+**On DuckDB the macro just writes the native `ASOF LEFT JOIN`.** Nothing about the DuckDB build changed: after the port, the 56 DuckDB tables hashed identically to their values before the port (apart from two intended, explained changes).
+
+#### **Task 6: Test It Without a Cloud Account (new in the second edition)**
+
+A portability claim you cannot test is a hope. The **goccy/bigquery-emulator** speaks enough of BigQuery's protocol for the real `dbt-bigquery` adapter to run against it, with no account and no bill. `dbt_f1_transformations/ci/bigquery_emulator/run_tests.sh` does the whole experiment:
+
+1. generate the synthetic dataset (one lap of telemetry per driver; the emulator is slow on large joins);
+2. build it on **DuckDB** as the reference;
+3. start the emulator, load the same raw data with `load_raw_to_bigquery.py`;
+4. run `dbt build` (models **and tests**) on BigQuery;
+5. **compare every table with the DuckDB version, row for row**.
+
+```bash
+BQ_EMULATOR_BIN=/path/to/bigquery-emulator BQ_PYTHON=/path/to/python make bq-emulator-test
+```
+
+The result at the end of this edition: **121 models and tests passed on BigQuery, and all 56 tables were identical to DuckDB.** (That run predates the later model changes in `docs/CHANGES.md`; it has not been repeated on the current 135 nodes.) Step 5 is the important one. Passing SQL only shows the queries *run*; the first full comparison found **17 of 56 tables different**, with six downstream tables empty, and every difference traced to a real portability defect (the pitfalls below).
+
+> **What this does and does not prove.** The emulator implements a subset of BigQuery's SQL, so a pass is strong evidence, not proof, of identical behaviour on real BigQuery. It cannot test incremental **re-runs**: dbt's `MERGE` sources are subqueries and the emulator only accepts a bare table there. Nothing here tests BigQuery cost or performance, the semantic layer on BigQuery, or the `metricflow_time_spine` model. The comparison was re-run on the final code, including the `BIGINT` change and the stint-overlap handling from Chapters 5 and 6: 121 nodes pass on BigQuery and 56 of 56 tables match DuckDB.
+
+**Emulator quirks you will meet** (all handled in the test harness, none in the project): it hangs on Parquet and CSV *loads* (the harness loads JSON and pre-loads the points seed), it labels DDL statements as `SELECT` with no destination table, it returns an error for `CREATE SCHEMA IF NOT EXISTS` on an existing dataset, it does not implement the routines endpoint, and it ignores `IGNORE NULLS` and mishandles windowed `MIN`/`MAX` over `TIMESTAMP` columns.
+
+#### **Task 7: Build on Real BigQuery (untested)**
+
+Everything above runs without a Google account. This task is the **same steps against your own project**, and it is the part nobody has run:
+
+```bash
+gcloud auth application-default login
+export F1_BQ_PROJECT=my-gcp-project
+python scripts/load_raw_to_bigquery.py --raw-dir airflow/data/raw --project $F1_BQ_PROJECT
+cd dbt_f1_transformations
+dbt deps && dbt seed --target bigquery
+dbt build --target bigquery --exclude fct_telemetry+      # build everything except telemetry first
+```
+
+Then telemetry, one session at a time (Chapter 7's `telemetry_only_sessions`), watching the bill.
+
+**What is different on BigQuery.** The telemetry tables are **partitioned with exactly one session per partition**, so the `insert_overwrite` strategy can only ever replace the session being loaded. If one partition held several sessions, loading a new one would silently overwrite its neighbours. The partition range is `bq_session_key_start` to `bq_session_key_end` (9000 to 13000 by default, at most 4000 partitions): **raise the upper bound before the season counter passes it**, because sessions outside the range land in a catch-all partition.
+
+**The other cloud pieces, and where they stand.** `modules/gcs_loader.py` (used by the `upload_to_gcs` DAG parameter) uploads raw Parquet to your bucket and skips objects whose size already matches; it is unit-tested with a fake hook, never against real storage. `scripts/deploy_to_composer.sh` and the `deploy_to_composer` workflow exist and have not been run against a real Composer environment. **No Composer environment is created by this project.**
 
 ### **Learner Pitfalls & Troubleshooting**
 
@@ -3458,13 +6662,33 @@ Each is an extension exercise. Because the local pipeline is already modular (so
 * **Why it Happens:** bucket names are global across all of Google Cloud.
 * **The Solution:** keep the project ID suffix, or add your own unique suffix.
 
+* **The Problem (second edition, found by comparing with DuckDB):** every column that came from an ASOF join (weather, positions, gaps, lap numbers on telemetry) is `NULL` on BigQuery, and six downstream tables are empty.
+* **Why it Happens:** the first BigQuery version of the macro carried the latest right-hand row forward with `LAST_VALUE(... IGNORE NULLS)` over a struct. The emulator silently ignores `IGNORE NULLS`, so each row saw only itself. (Real BigQuery supports the clause, so the original may well have worked there; it simply could not be *proved* here.) The telemetry model's `lap_number` was `NULL` everywhere, and the models that filter on it produced nothing.
+* **The Solution:** a formulation that needs no `IGNORE NULLS` (Task 5). It was first tested on a tiny example (five left-hand rows, three right-hand rows) that included the awkward cases: no earlier reading, a tie, a `NULL` right-hand value, two keys. **Test a new join pattern on a tiny example before trusting it on a table.**
+
+* **The Problem (second edition, found by the comparison):** a duration column has no `NULL`s on DuckDB and eight on BigQuery.
+* **Why it Happens:** `LEAST(60, x)` returns `60` on DuckDB when `x` is `NULL`, because DuckDB's `LEAST` ignores `NULL`s. BigQuery's `LEAST` returns `NULL` if *any* argument is `NULL`. The last sample of each driver has no "next sample", so its duration was `NULL` there.
+* **The Solution:** make the cap explicit: `LEAST(60, COALESCE(x, 60))`. This kind of difference never raises an error. Only comparing the *data* finds it.
+
+* **The Problem (second edition):** a model fails with `Function not found: DEGREES`, or `... neither grouped nor aggregated`.
+* **Why it Happens:** BigQuery has no `DEGREES()`, and it is stricter than DuckDB about selecting an expression of a column while grouping only by an alias of a different expression.
+* **The Solution:** convert by hand (`x * 180 / ACOS(-1)`) and compute the grouped expression in its own CTE.
+
+* **The Problem (second edition):** `dbt` prints `failed to add job: job <id> is already created` and nothing else.
+* **Why it Happens:** the real error happened first. The Google client then **retried** the failed statement under the same job id, and the retry's error replaced the real one.
+* **The Solution:** run the failing SQL directly with retries switched off (`client.query(sql, retry=None, job_retry=None)`). The real message appears at once. The same trick explained several "hangs" in the emulator.
+
+* **The Problem (second edition, not testable here):** the first run of an incremental telemetry model works, and a re-run may fail on BigQuery.
+* **Why it Happens:** dbt's `insert_overwrite` and `merge` generate a `MERGE` whose source is a subquery, which the emulator cannot run. This path is **untested**.
+* **The Solution:** none yet. Run a re-run against real BigQuery before relying on it, and use `dbt run-operation delete_sessions_from_incrementals` (Chapter 7, verified on BigQuery) if you need to reload a session.
+
 ---
 
-## **Chapter 11: Professional Workflow: Git and CI/CD**
+## **Chapter 11: Professional Workflow: Git, CI/CD and Testing Everything**
 
 ### **Chapter Overview**
 
-Version control is how a project survives mistakes. This chapter covers the **branch-based workflow** used in the build **[VERIFIED]** and explains the CI/CD pieces that were scaffolded **[SCAFFOLDED]**.
+Version control is how a project survives mistakes. This chapter covers the **branch-based workflow** used in the build **[VERIFIED]**, the CI/CD workflows (which exist in the second edition, **[CODE FINAL, RUN NOT CONFIRMED]** on GitHub Actions itself), and, new in this edition, **one command that tests everything locally**.
 
 ### **Step by Step Procedures**
 
@@ -3484,33 +6708,118 @@ git commit -m "feat: dynamic task mapping for OpenF1 extraction"
 
 Good commits are small, named for *what and why*, and never include data (`airflow/data`, `*.duckdb`, `output/`) or secrets. If you committed something large by mistake, remove it from tracking with `git rm --cached <path>` and add it to `.gitignore`.
 
-#### **Task 2: Understand the CI/CD Scaffold**
+#### **Task 2: The CI/CD Workflows**
 
-`.github/workflows/deploy_to_composer.yml` and `scripts/deploy_to_composer.sh` exist as **empty files**. The intent recorded in the build: when a pull request is **merged into `main`**, GitHub Actions should (1) check the code and (2) copy the DAGs and plugins into the Composer bucket. The notion of a pipeline that validates before it deploys is the key idea:
+The first edition had two empty files and a reference sketch. The second edition has two real workflows in `.github/workflows/`, plus `scripts/deploy_to_composer.sh`.
 
-* **Continuous Integration (CI):** on every pull request, run automatic checks (Python syntax, `dbt parse`, `dbt compile`).
-* **Continuous Deployment (CD):** on merge to `main`, ship the code to the environment.
+* **Continuous Integration (CI):** on every pull request, run automatic checks.
+* **Continuous Deployment (CD):** on a manual trigger, ship the code to the environment.
 
-Below is a **reference sketch** to complete the exercise. It is **[ADDED FOR THIS BOOK]** and has **not** been run; it also assumes a Composer environment, a bucket and credentials that this project does not yet have.
+**`ci.yml`** is the one that matters day to day. It runs, in order, every Python test, a compile check of the DAG code, a synthetic-data build of the whole dbt project (models and tests), and the dashboard tests:
 
 ```yaml
 name: ci
 on:
   pull_request:
+  push:
     branches: [main]
 jobs:
-  validate:
+  dbt-and-python:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
-      - run: pip install dbt-duckdb
-      - run: python -m compileall airflow/dags airflow/plugins
+      - run: pip install dbt-duckdb pyarrow pytest numpy duckdb streamlit plotly
+      - name: Python unit tests (extractor, manifest, GCS loader, radio, BigQuery loader)
+        run: python -m pytest -q airflow/tests
+      - name: Strategy simulator tests
+        run: python -m pytest -q analytics/tests
+      - name: Compile DAG and plugin code
+        run: python -m compileall -q airflow/dags airflow/plugins
+      - name: Build a synthetic OpenF1 dataset
+        run: python dbt_f1_transformations/ci/generate_fixtures.py "$RUNNER_TEMP/f1_raw"
+      - name: dbt deps
+        working-directory: dbt_f1_transformations
+        run: dbt deps --profiles-dir . --target ci
+      - name: dbt build (all models and all tests) on the synthetic data
+        working-directory: dbt_f1_transformations
+        env:
+          F1_RAW_DATA_PATH: ${{ runner.temp }}/f1_raw
+          F1_DUCKDB_PATH: ${{ runner.temp }}/f1_ci.duckdb
+        run: |
+          dbt seed --profiles-dir . --target ci
+          dbt build --profiles-dir . --target ci --vars '{enable_radio_transcripts: true, min_stint_laps_for_degradation: 3}'
+      - name: Dashboard tests (every page renders against the built warehouse)
+        env:
+          F1_DUCKDB_PATH: ${{ runner.temp }}/f1_ci.duckdb
+        run: python -m pytest -q dashboards/tests
+
+  # Same project built on BigQuery (emulator) and compared table-by-table with DuckDB. Not yet run on GitHub Actions
+  # (only locally), so it is advisory until it has proven stable there.
+  bigquery-emulator:
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - run: pip install dbt-duckdb dbt-bigquery google-cloud-bigquery pyarrow duckdb
+      - name: Install the BigQuery emulator
+        run: |
+          curl -sL -o emu.deb https://github.com/goccy/bigquery-emulator/releases/download/v0.8.1/bigquery-emulator_0.8.1-1_amd64.deb
+          sudo dpkg -i emu.deb
+      - name: Build on BigQuery and compare with DuckDB
+        env:
+          BQ_EMULATOR_BIN: /usr/bin/bigquery-emulator
+          BQ_PYTHON: python
+        run: bash dbt_f1_transformations/ci/bigquery_emulator/run_tests.sh
 ```
 
-Keep deployment (the Composer upload) as a second, separate job that only runs on pushes to `main`, and store credentials in **GitHub Actions secrets**, never in the repository.
+**Read it like an engineer**
+
+* **One job, whatever DuckDB is current.** The workflow installs the latest `duckdb`. DuckDB 1.5 once crashed on an `INTEGER`/`BIGINT` mismatch (Chapter 5), so if you want an engine regression to fail a pull request instead of your laptop, add a matrix of DuckDB versions. `make ci-test` was run by hand for this edition on DuckDB 1.5.6 and 2.0.0 and passes all 135 nodes; the workflow file itself has not been confirmed on GitHub.
+* **No real data and no secrets.** The dataset is generated on the spot (`generate_fixtures.py`), so CI needs no API access and no credentials.
+* **`bigquery-emulator` is `continue-on-error: true`.** It downloads the emulator and runs the equivalence test from Chapter 10. It stays advisory until it has proven stable on GitHub's runners.
+
+**`deploy_to_composer.yml`** is **manual-only** (`workflow_dispatch`) with a dry-run default, because no Composer environment exists yet. It authenticates with a service-account key stored in **GitHub Actions secrets**, never in the repository, and calls `deploy_to_composer.sh`, which syncs `dags/` and `plugins/` to the Composer bucket **without deleting** anything remote. It has never been run against a real environment.
+
+#### **Task 3: Run Every Test Locally (new in the second edition)**
+
+Everything CI does, you can do on your own machine in about a minute, before you push. This is the first thing to run after cloning, and the last thing to run before a pull request:
+
+```bash
+pip install dbt-duckdb pyarrow pytest numpy duckdb streamlit plotly
+cd dbt_f1_transformations && dbt deps && cd ..       # once
+make ci-test
+```
+
+`make ci-test` generates a synthetic OpenF1-shaped dataset (`ci/generate_fixtures.py`), then runs:
+
+| Step | Expected |
+|---|---|
+| `python -m pytest -q airflow/tests` | extractor, manifest, GCS loader, radio transcriber, BigQuery loader tests pass |
+| `python -m pytest -q analytics/tests` | strategy simulator tests pass |
+| `dbt seed` then `dbt build --target ci` | every model and test passes (135 nodes) |
+| `python -m pytest -q dashboards/tests` | every dashboard page renders (104 tests) |
+
+Other targets: `make dashboard` (the Streamlit app), `make strategy SESSION=<a real key>`, `make semantic-validate` (MetricFlow, Chapter 9) and `make bq-emulator-test` (Chapter 10). If `make` is not installed (common in Git Bash on Windows), the commands in the `Makefile` can be typed directly; just remember that DuckDB needs `F:/...` style paths, not `/f/...`.
+
+**Why synthetic data is worth the trouble.** The dataset is small and deterministic, and it deliberately contains the situations the code must handle: a safety car, a sector yellow, rain starting, a penalty message, an in-lap and out-lap, an **overlapping stint**, string-typed gap columns in one session and numeric in another, and car-data and location timestamps that do not line up. When a test fails you know what you broke.
+
+**What a green run does and does not tell you.** It proves the code is consistent and that the tests catch the faults that were injected on purpose. It does **not** prove the models are right on real OpenF1 data (the real-data runs found four defects that the synthetic data could not, all described in Chapters 5 to 7) or that the corner thresholds, safety-car estimates and strategy simulator are right for real races. Passing here is the *start* of trusting a change, not the end.
+
+**Run your real data in this order** the first time, so that a failure points at one thing:
+
+```bash
+dbt seed
+dbt build --select staging                              # fix any "column not found" first
+dbt build --select +int_lap_context+ --exclude fct_telemetry+
+dbt run --select fct_telemetry --vars '{telemetry_only_sessions: [<session_key>]}'     # add sessions as needed
+dbt build --select fct_telemetry+
+```
 
 ### **Learner Pitfalls & Troubleshooting**
 
@@ -3522,6 +6831,14 @@ Keep deployment (the Composer upload) as a second, separate job that only runs o
 * **Why it Happens:** a Parquet or `.duckdb` file was committed.
 * **The Solution:** remove it from history or tracking and rely on `.gitignore`; data is re-creatable from the pipeline.
 
+* **The Problem (second edition):** `make ci-test` stops immediately with `dbt expects 2 package(s) based on packages specified in packages.yml, but found only 0 package(s) installed`.
+* **Why it Happens:** `packages.yml` lists `codegen` (and its dependency `dbt_utils`), and they have not been downloaded into `dbt_packages/` yet.
+* **The Solution:** run `dbt deps` once from `dbt_f1_transformations/` (the GitHub workflow does this for you). No model uses these packages, so if the package hub is unreachable you can simply move `packages.yml` and `package-lock.yml` aside while testing.
+
+* **The Problem (second edition, hit on the author's machine):** `make ci-test` reports `PASS=112 ... ERROR=2 ... SKIP=9`, with `INTERNAL Error: ... inequal types (INTEGER != BIGINT)`.
+* **Why it Happens:** the DuckDB 1.5 optimizer bug described in Chapter 5. The project passed on the machine it was written on and failed on a different DuckDB version, which is exactly the situation a matrix of DuckDB versions in CI would catch.
+* **The Solution:** `dim_drivers` and `dim_driver_session` cast their keys to `BIGINT` (Chapter 5). Check your engine with `python -c "import duckdb; print(duckdb.__version__)"`.
+
 ---
 
 ## **Chapter 12: Operations and Troubleshooting Playbook**
@@ -3529,7 +6846,7 @@ Keep deployment (the Composer upload) as a second, separate job that only runs o
 ### **Daily Start-Up and Shut-Down**
 
 ```bash
-# Start
+# Start (airflow/.env must exist: copy airflow/.env.example the first time)
 cd airflow && docker compose up -d
 source venv/Scripts/activate        # from the project root, if not already active
 
@@ -3541,11 +6858,13 @@ Before running dbt, **close** SQL tools that hold the DuckDB file.
 
 ### **The Full Run Order**
 
-1. Trigger the Airflow DAG with `latest` (or a specific `session_key`).
-2. Confirm Parquet files in `airflow/data/raw/`.
-3. `dbt run` (staging and marts), then `dbt test`.
-4. For telemetry: `dbt run --select fct_telemetry`, then the export with `--vars`.
-5. Refresh Power BI or query with Harlequin.
+1. Trigger the Airflow DAG with `latest` (or a specific `session_key`). For a backfill, bound it with `min_session_key` and consider `skip_existing`.
+2. Confirm Parquet files in `airflow/data/raw/` and the run's manifest in `airflow/data/raw/_manifests/`.
+3. `dbt build` (staging, intermediate, marts and their tests). Warnings about plausibility are signals to read, not necessarily bugs.
+4. For telemetry on a large dataset: `dbt run --select fct_telemetry --vars '{telemetry_only_sessions: [<session_key>]}'` for the sessions you need, then `dbt build --select fct_telemetry+`. Then, if you want the partitioned Parquet lake, the export with `--vars`.
+5. Look at the results: Power BI, Harlequin, the Streamlit dashboards (`make dashboard`), or ask MetricFlow (`mf query ...`).
+6. When you have something to decide: `make strategy SESSION=<a real session key>`.
+7. Before a pull request: `make ci-test`.
 
 ### **Deep Clean**
 
@@ -3553,9 +6872,9 @@ When dbt behaves strangely after many edits, clear generated artefacts, then reb
 
 ```bash
 cd dbt_f1_transformations
-dbt clean
-dbt deps        # only if you use packages
-dbt run
+dbt clean          # removes target/ and dbt_packages/
+dbt deps           # required again after `dbt clean`: packages.yml lists codegen
+dbt build
 ```
 
 ### **Consolidated Error Index**
@@ -3579,6 +6898,23 @@ dbt run
 | dbt task fails in Airflow | dbt or paths not available in the container | 8 |
 | Plan shows placeholder ID | `tfvars` not edited | 10 |
 | `index.lock` exists | Stale Git lock | 11 |
+| `required variable ... is missing a value` on `docker compose up` | `.env` not created | 2 |
+| Run aborts: `sessions would be extracted (guard max_sessions=...)` | Fan-out guard | 3 |
+| `INTERNAL Error: ... inequal types (INTEGER != BIGINT)` | DuckDB 1.5 optimizer bug with a key cast to `INTEGER` on one side | 5, 11 |
+| `Cannot switch temporary directory after the current one has been used` | `temp_directory` under `settings` instead of `config_options` (the shipped profile sets none) | 5 |
+| Thousands of failures on `unique_combination_of_columns` for `int_lap_context` | Overlapping stints fan out the lap join | 6 |
+| `assert_pit_lane_time_plausible` floods with warnings | Test not scoped to green-flag Race/Sprint stops | 6 |
+| `Catalog Error: ... int_track_status_periods does not exist` | `--select model+` skips upstream; use `+model+` | 6 |
+| Strategy CLI: `session ... not found` | Used a synthetic session key on real data | 6 |
+| First `fct_telemetry` build runs for over an hour | One giant spill; build only the sessions you need | 7 |
+| Corner apex speeds differ lap to lap; a corner at distance 0 | Distance drift not normalised; truncated detection window | 7 |
+| `delete_sessions_from_incrementals` logs "Deleted" but rows remain | `run-operation` does not auto-commit | 7 |
+| Dashboard `CatalogException` | A model was never built | 9 |
+| `mf query`: `Could not set lock on file` | DuckDB single writer | 9 |
+| BigQuery: ASOF-derived columns all `NULL` | `LAST_VALUE ... IGNORE NULLS` not honoured; use running `MAX` + join | 10 |
+| BigQuery: `NULL` where DuckDB gives a value | `LEAST(x, NULL)` is `NULL` on BigQuery | 10 |
+| `failed to add job: job ... is already created` | A retry hid the real first error; run with retries off | 10 |
+| `dbt expects 2 package(s) ...` | Run `dbt deps` once | 11 |
 
 ---
 
@@ -3586,37 +6922,69 @@ dbt run
 
 ```text
 f1_data_project/
-├── .github/workflows/deploy_to_composer.yml        [SCAFFOLDED]
+├── .github/workflows/
+│   ├── ci.yml                                      tests on every pull request
+│   └── deploy_to_composer.yml                      manual only                           [CODE FINAL, RUN NOT CONFIRMED]
 ├── .gitignore
-├── Makefile
+├── Makefile                                        make ci-test, dashboard, strategy, semantic-validate, bq-emulator-test
 ├── README.md
+├── analytics/
+│   ├── f1_strategy/                                Monte Carlo strategy simulator (model, simulate, optimize, calibrate, cli)
+│   ├── requirements.txt
+│   └── tests/
 ├── airflow/
+│   ├── .env.example                                copy to .env (git-ignored) before `docker compose up`
+│   ├── Dockerfile                                  Airflow 2.8.1 on Python 3.11 + requirements + dbt-duckdb + Whisper model
 │   ├── docker-compose.yaml
 │   ├── requirements.txt
 │   ├── dags/
-│   │   ├── .airflowignore
-│   │   ├── extract_openf1_dag.py
-│   │   ├── dbt_cosmos_dag.py                       [SCAFFOLDED]
+│   │   ├── extract_openf1_dag.py                   extraction + opt-in dbt / GCS / radio tasks
+│   │   ├── dbt_cosmos_dag.py                       optional Cosmos DAG                   [CODE FINAL, RUN NOT CONFIRMED]
 │   │   └── modules/
-│   │       ├── event_extractor.py
-│   │       ├── universal_extractor.py
-│   │       └── gcs_loader.py                       [SCAFFOLDED]
-│   ├── plugins/hooks/openf1_hook.py
-│   ├── data/raw/                                   (Parquet files from Airflow)
-│   └── logs/
+│   │       ├── universal_extractor.py              (event_extractor.py is the Chapter 2 first version)
+│   │       ├── pipeline_utils.py                   manifest + failure notification
+│   │       ├── radio_transcriber.py                opt-in speech-to-text                 [CODE FINAL, RUN NOT CONFIRMED]
+│   │       └── gcs_loader.py                       upload to GCS                         [CODE FINAL, RUN NOT CONFIRMED]
+│   ├── plugins/
+│   │   ├── hooks/openf1_hook.py
+│   │   └── slack_alerts.py                         Slack failure callback used by the DAG
+│   ├── tests/                                      extractor, manifest, GCS, radio, BigQuery loader tests
+│   └── data/raw/                                   Parquet files from Airflow (and _manifests/)
+├── dashboards/
+│   ├── app.py                                      streamlit run dashboards/app.py
+│   ├── f1_dash/                                    data.py, charts/, components/, workspaces/<role>/<phase>.py, insights.py, state.py, provenance.py, theme.py
+│   └── tests/
 ├── dbt_f1_transformations/
-│   ├── dbt_project.yml
-│   ├── macros/export_fct_telemetry.sql
-│   └── models/
-│       ├── staging/        sources.yml + 18 stg_*.sql
-│       ├── intermediate/   (empty; reserved)
-│       └── marts/
-│           ├── core/       dim_drivers.sql, dim_sessions.sql
-│           ├── analytics/  14 fct_*.sql
-│           └── schema.yml
-├── opentofu/               main.tf, provider.tf, variables.tf, terraform.tfvars
+│   ├── dbt_project.yml                             materialisations + every tunable assumption (vars)
+│   ├── profiles.yml                                dev / container / ci / bigquery / bigquery_emulator targets
+│   ├── packages.yml
+│   ├── seeds/f1_points_system.csv                  season-aware Race and Sprint points scales
+│   ├── macros/
+│   │   ├── portable.sql                            cross-database macros (DuckDB and BigQuery)
+│   │   ├── export_fct_telemetry.sql
+│   │   ├── delete_sessions_from_incrementals.sql
+│   │   └── emulator_overrides.sql                  test-only
+│   ├── models/
+│   │   ├── metricflow_time_spine.sql
+│   │   ├── staging/            sources.yml + 19 stg_*.sql
+│   │   ├── intermediate/       int_track_status_periods.sql, int_lap_context.sql
+│   │   ├── marts/
+│   │   │   ├── core/           dim_drivers, dim_driver_session, dim_sessions, dim_circuits
+│   │   │   ├── analytics/      fct_*.sql, dim_session_corners.sql
+│   │   │   └── schema.yml
+│   │   └── semantic/           semantic_models.yml, metrics.yml, time_spine.yml
+│   ├── tests/                  singular tests; generic/unique_combination_of_columns.sql
+│   └── ci/
+│       ├── generate_fixtures.py                    the synthetic OpenF1 dataset
+│       ├── semantic_check.py                       MetricFlow results vs hand-written SQL
+│       ├── bq_emulator_runner.py                   runs dbt-bigquery against the emulator
+│       └── bigquery_emulator/                      run_tests.sh, prepare.py, compare_duckdb_bigquery.py
+├── docs/                   ANALYTICS_GUIDE.md, CHANGES.md, ISSUES_CHECKLIST.md, example_queries.sql, architecture.mmd
+├── opentofu/               main.tf (GCS bucket + BigQuery datasets), provider.tf, variables.tf, terraform.tfvars
 ├── output/telemetry_data/  (partitioned Parquet lake)
-├── scripts/deploy_to_composer.sh                   [SCAFFOLDED]
+├── scripts/
+│   ├── load_raw_to_bigquery.py
+│   └── deploy_to_composer.sh                       [CODE FINAL, RUN NOT CONFIRMED]
 └── f1_local_warehouse.duckdb
 ```
 
@@ -3643,6 +7011,8 @@ f1_data_project/
 | `championship_teams` | Constructor standings | Race sessions |
 | `starting_grid` | Grid positions | Qualifying, sprint, race |
 
+**A note on derived files.** `radio_transcripts_<session>_extracted.parquet` is *not* an OpenF1 endpoint. It is produced by `radio_transcriber.py` from the `team_radio` recordings (Chapter 6), and its name is chosen so the `team_radio_*` source glob cannot pick it up.
+
 ## **Appendix C: Glossary**
 
 * **ASOF join:** a join that matches each row to the nearest earlier row in another table, by time.
@@ -3664,3 +7034,21 @@ f1_data_project/
 * **Spill to disk:** using temporary files when memory is full.
 * **Star schema:** facts surrounded by dimensions.
 * **XCom:** Airflow's mechanism for passing small values between tasks.
+* **Apex:** the slowest point of a corner. Derived from telemetry here, since the API publishes no corner data.
+* **BigQuery emulator:** a local program that imitates BigQuery well enough to run the real `dbt-bigquery` adapter against, with no account.
+* **Common random numbers:** evaluating every simulated strategy against the *same* random draws, so differences are the strategies and not luck.
+* **Distance axis:** telemetry expressed against distance along the lap instead of time, so two laps can be compared point by point.
+* **Empirical-Bayes shrinkage:** pulling a noisy per-group estimate toward the overall estimate, by an amount that depends on how little data the group has.
+* **Fan-out (join):** a join that returns a row more than once, usually because the right side matches several times. Not to be confused with *fan-out* of mapped Airflow tasks.
+* **Grain:** the single thing one row represents (here, one driver in one lap). A violated grain duplicates or drops data silently.
+* **Hazard (per-lap):** the chance that an event, such as a safety car, starts on any given lap.
+* **Monte Carlo simulation:** estimating an outcome by running many randomised trials and looking at the distribution.
+* **Mutation testing:** deliberately breaking the data to confirm that the tests notice.
+* **Normalisation:** rescaling measurements to a common reference, such as rescaling every lap to the same track length.
+* **Optimizer barrier:** a construct such as `OFFSET 0` that stops a query optimizer from rewriting across it.
+* **Portable SQL:** SQL written (here through macros) so one project runs on more than one engine.
+* **Representative lap:** a clean, comparable lap: not the first, an in-lap or out-lap, nor under yellow, safety car or red flag, and not a slow outlier.
+* **Opt-in session build:** telemetry built only for chosen sessions (`telemetry_only_sessions`), so a failure loses one small build, not the whole run.
+* **Semantic layer:** one governed, named definition of each business metric that every tool asks for.
+* **Spine (analytical):** the model that carries every fact about a unit (here, `int_lap_context`, one row per driver per lap) for all downstream models to read.
+* **Undercut / overcut:** stopping earlier than a rival to gain on fresh tyres, or staying out longer to gain when the rival's stop is slower.
