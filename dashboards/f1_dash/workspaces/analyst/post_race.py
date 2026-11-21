@@ -55,6 +55,11 @@ def render(con):
         st.dataframe(ps, width="stretch", hide_index=True)
         panel("Undercut / overcut contests", "estimated", source="fct_undercut_overcut")
         uc = data.undercuts(con, sk)
+        if not uc.empty and "any_neutralisation" in uc:
+            hide_sc = st.checkbox("Hide contests that involve a stop under a safety car or VSC", value=True, key="ana_post_uc_sc",
+                                  help="Under a neutralisation everybody stops together, so gap swings there say nothing about undercut or overcut strategy.")
+            if hide_sc:
+                uc = uc[~uc["any_neutralisation"].fillna(False).astype(bool)]
         st.dataframe(uc, width="stretch", hide_index=True) if not uc.empty else st.caption("No related pit-stop pairs with the attacker directly behind the defender.")
     with t3:
         panel("Race events", "measured", note="Neutralisations, penalties, pit stops, retirements and the fastest lap on one lap axis.")

@@ -1,6 +1,7 @@
 {# One row per pit stop. pit_lane_time_seconds is what OpenF1 reports (pit entry to exit), NOT stationary time.
    time_lost_seconds = (in-lap + out-lap) - 2 x the driver's median clean lap: it is only meaningful under green
-   flags, and is_under_neutralisation flags stops made under SC/VSC/red where the real cost is much lower.
+   flags (and not on lap 1), and is_under_neutralisation flags stops whose in-lap or out-lap ran under SC/VSC/red,
+   where the real cost is much lower.
    position change across the stop includes any on-track passes made on the out-lap.
    ONLY Race and Sprint sessions are kept: in practice and qualifying OpenF1 reports every garage visit as a pit stop
    (real data: median pit-lane time 340 s in practice vs 23.5 s in races), which would swamp circuit pit-loss medians. #}
@@ -23,6 +24,7 @@ stops AS (
         i.position_start AS position_before_stop,
         o.position_end AS position_after_stop,
         i.track_status AS in_lap_track_status,
+        o.track_status AS out_lap_track_status,
         i.lap_time_seconds AS in_lap_time_seconds,
         o.lap_time_seconds AS out_lap_time_seconds,
         i.driver_median_clean_lap_seconds AS reference_lap_seconds
@@ -32,9 +34,11 @@ stops AS (
 )
 SELECT
     *,
-    in_lap_time_seconds + out_lap_time_seconds - 2 * reference_lap_seconds AS time_lost_seconds,
+    -- lap 1 is not comparable with a clean median lap (standing start), so a lap-1 stop has no time lost
+    CASE WHEN lap_number = 1 THEN NULL ELSE in_lap_time_seconds + out_lap_time_seconds - 2 * reference_lap_seconds END AS time_lost_seconds,
     position_before_stop - position_after_stop AS net_positions_gained,
-    COALESCE(in_lap_track_status IN ('SC', 'VSC', 'RED'), FALSE) AS is_under_neutralisation,
+    -- a stop is neutralised when its in-lap OR its out-lap runs under SC/VSC/red: a lap-9 stop whose out-lap is the first safety-car lap is not a green stop
+    (COALESCE(in_lap_track_status IN ('SC', 'VSC', 'RED'), FALSE) OR COALESCE(out_lap_track_status IN ('SC', 'VSC', 'RED'), FALSE)) AS is_under_neutralisation,
     {{ f1_median_over('pit_lane_time_seconds', 'session_key') }} AS session_median_pit_lane_time_seconds,
     pit_lane_time_seconds > {{ f1_median_over('pit_lane_time_seconds', 'session_key') }} + {{ var('slow_stop_margin_seconds') }} AS is_slow_stop,
     RANK() OVER (PARTITION BY session_key ORDER BY pit_lane_time_seconds) AS pit_lane_rank

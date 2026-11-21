@@ -93,7 +93,7 @@ models:
         description: "Pit entry to exit as reported by OpenF1 (NOT stationary time)."
         data_tests: [not_null]
       - name: time_lost_seconds
-        description: "In-lap + out-lap minus 2x the driver's median clean lap. Not meaningful under SC/VSC (see is_under_neutralisation)."
+        description: "In-lap + out-lap minus 2x the driver's median clean lap. Not meaningful under SC/VSC (see is_under_neutralisation); NULL for a lap-1 stop."
 
   - name: fct_penalties
     description: "Penalties parsed from race control messages; unparsed fields are NULL."

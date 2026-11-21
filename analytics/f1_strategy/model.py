@@ -49,7 +49,11 @@ class SimResult:
     sc_mask: np.ndarray                   # shape (n_sims, laps), shared by all strategies (paired comparison)
 
     def summary(self):
-        best = self.totals.argmin(axis=0)
+        # p_best: the share of simulations in which a strategy is the fastest. Strategies that tie (to within a microsecond) share the credit, because argmin
+        # gives all of it to the lowest index, which made equivalent strategies look very different.
+        floor = self.totals.min(axis=0)
+        tied = np.isclose(self.totals, floor, rtol=0.0, atol=1e-6)
+        credit = tied / tied.sum(axis=0)
         rows = []
         for i, s in enumerate(self.strategies):
             t = self.totals[i]
@@ -57,6 +61,6 @@ class SimResult:
                 "strategy": s.label(), "stops": s.stops,
                 "mean_s": float(t.mean()), "median_s": float(np.median(t)),
                 "p10_s": float(np.percentile(t, 10)), "p90_s": float(np.percentile(t, 90)),
-                "p_best": float((best == i).mean()),
+                "p_best": float(credit[i].mean()),
             })
         return sorted(rows, key=lambda r: r["mean_s"])

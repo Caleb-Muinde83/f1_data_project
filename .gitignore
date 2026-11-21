@@ -239,3 +239,7 @@ dbt_f1_transformations/target/
 dbt_f1_transformations/dbt_packages/
 dbt_f1_transformations/logs/
 logs/
+
+diagnostics_output.txt
+diagnostics_real_data.sql
+run_diagnostics.py

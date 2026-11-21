@@ -3,13 +3,16 @@ import numpy as np
 import pandas as pd
 import plotly.express as px
 import plotly.graph_objects as go
-from ._common import empty, lacks
+from ._common import driver_colour_map, empty, lacks
 
 
 def sc_hazard_fig(df: pd.DataFrame):
     if df.empty:
         return empty("No safety car model rows")
-    d = df.assign(series=df["circuit_key"].astype(str) + " " + df["track_status"])
+    # The legend used to show the circuit key ("49 SC"), which means nothing to a reader: show the event type and how many races the rate rests on.
+    multi = df["circuit_key"].nunique() > 1
+    d = df.assign(series=df["track_status"] + " (" + df["races_observed"].astype(str) + " races" + df["low_sample"].map({True: ", low sample", False: ""}).fillna("")
+                  + ")" + (" circuit " + df["circuit_key"].astype(str) if multi else ""))
     return px.line(d, x="laps_remaining", y="p_at_least_one_start", color="series", markers=True,
                    labels={"laps_remaining": "Laps remaining", "p_at_least_one_start": "P(at least one start)"})
 
@@ -31,7 +34,7 @@ def degradation_projection_fig(fit: dict):
     fig.add_scatter(x=fit["proj_lap"], y=fit["proj"], mode="lines", name="projection", line={"color": "#b983ff", "width": 3})
     fig.add_scatter(x=list(fit["proj_lap"]) + list(fit["proj_lap"])[::-1], y=list(fit["hi"]) + list(fit["lo"])[::-1], fill="toself",
                     fillcolor="rgba(185,131,255,0.15)", line={"width": 0}, name="~90% interval", hoverinfo="skip")
-    fig.update_layout(xaxis_title="Lap", yaxis_title="Lap time (s)")
+    fig.update_layout(xaxis_title="Lap", yaxis_title="Fuel-corrected lap time (s)")
     return fig
 
 
@@ -49,7 +52,7 @@ def anomaly_fig(df: pd.DataFrame):
 def residual_fig(res: pd.DataFrame):
     if lacks(res, "lap_number", "residual", "driver"):
         return empty("No fitted laps to evaluate")
-    fig = px.scatter(res, x="lap_number", y="residual", color="driver", labels={"residual": "Actual - predicted lap time (s)", "lap_number": "Lap"})
+    fig = px.scatter(res, x="lap_number", y="residual", color="driver", color_discrete_map=driver_colour_map(res["driver"].unique()), labels={"residual": "Actual - predicted lap time (s)", "lap_number": "Lap"})
     fig.add_hline(y=0, line_dash="dot")
     return fig
 

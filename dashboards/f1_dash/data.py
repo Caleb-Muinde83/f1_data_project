@@ -106,7 +106,7 @@ def corners(con, session_key: int):
         d.driver_acronym AS driver, ROUND(AVG(p.apex_speed_kph), 1) AS avg_apex_kph, ROUND(AVG(p.entry_speed_kph), 1) AS avg_entry_kph,
         ROUND(AVG(p.brake_to_apex_distance_m), 0) AS avg_brake_to_apex_m
         FROM dim_session_corners c
-        LEFT JOIN fct_corner_performance p ON p.session_key = c.session_key AND p.corner_number = c.corner_number AND p.is_representative_lap
+        LEFT JOIN fct_corner_performance p ON p.session_key = c.session_key AND p.corner_number = c.corner_number AND p.is_representative_lap AND p.is_complete_lap
         LEFT JOIN dim_driver_session d ON d.session_key = p.session_key AND d.driver_number = p.driver_number
         WHERE c.session_key = ? GROUP BY ALL ORDER BY c.corner_number, d.driver_acronym""", [session_key])
 
@@ -256,7 +256,7 @@ def fastest_laps(con, session_key: int):
 
 
 def distance_trace(con, session_key: int, driver_number: int, lap_number: int):
-    return q(con, """SELECT distance_m, avg_speed_kph AS speed_kph, avg_throttle AS throttle, max_brake AS brake, gear, x, y, elapsed_seconds
+    return q(con, """SELECT distance_m, avg_speed_kph AS speed_kph, avg_throttle AS throttle, max_brake AS brake, gear, x, y, elapsed_seconds, is_complete_lap
         FROM fct_telemetry_distance_trace WHERE session_key = ? AND driver_number = ? AND lap_number = ? ORDER BY distance_bin""",
              [session_key, driver_number, lap_number])
 
@@ -390,7 +390,7 @@ def race_events(con, session_key: int):
     parts = []
     nz = neutralisations(con, session_key)
     if not nz.empty:
-        parts.append(pd.DataFrame({"lap": nz["start_lap"], "kind": "Neutralisation", "driver": None,
+        parts.append(pd.DataFrame({"lap": nz["start_lap"], "end_lap": nz["end_lap"], "kind": "Neutralisation", "driver": None,
                                    "detail": nz["track_status"] + " for " + nz["duration_laps"].astype(str) + " laps (" + nz["start_lap"].astype(str) + "-" + nz["end_lap"].astype(str) + ")"}))
     pn = penalties(con, session_key)
     if not pn.empty:
@@ -412,10 +412,18 @@ def race_events(con, session_key: int):
         top = fl.iloc[0]
         parts.append(pd.DataFrame({"lap": [top["lap_number"]], "kind": "Fastest lap", "driver": [top["driver"]], "detail": [f"{top['fastest_lap_time_seconds']:.3f}s"]}))
     if not parts:
-        return pd.DataFrame(columns=["lap", "kind", "driver", "detail"])
+        return pd.DataFrame(columns=["lap", "end_lap", "kind", "driver", "detail"])
     ev = pd.concat(parts, ignore_index=True).dropna(subset=["lap"])
     ev["lap"] = ev["lap"].astype(int)
     return ev.sort_values(["lap", "kind"]).reset_index(drop=True)
+
+
+def penalties_so_far(pn: pd.DataFrame, lap: int) -> pd.DataFrame:
+    """Penalties issued up to `lap` for a replay. A penalty's `served_lap` is only shown once that lap has been reached: before, it is future information."""
+    d = pn[pn["lap_number"] <= lap].copy()
+    if "served_lap" in d:
+        d["served_lap"] = d["served_lap"].where(d["served_lap"].isna() | (d["served_lap"] <= lap)).astype("Int64")
+    return d
 
 
 def sessions_with_telemetry(con):

@@ -24,9 +24,10 @@ def strategy_fig(rows: list):
         return empty("No simulation result")
     df = pd.DataFrame(rows)
     fig = go.Figure()
-    fig.add_bar(y=df["strategy"], x=df["mean_s"], orientation="h", name="mean",
-                error_x={"type": "data", "symmetric": False, "array": df["p90_s"] - df["mean_s"], "arrayminus": df["mean_s"] - df["p10_s"]})
-    fig.update_layout(yaxis={"autorange": "reversed"}, xaxis_title="Total race time (s)  (bars: P10 to P90)")
+    # Dots with P10 to P90 whiskers, not bars: a bar on an axis that does not start at zero makes tiny differences look large.
+    fig.add_scatter(y=df["strategy"], x=df["mean_s"], mode="markers", name="mean", marker={"size": 11, "color": "#e10600"},
+                    error_x={"type": "data", "symmetric": False, "array": df["p90_s"] - df["mean_s"], "arrayminus": df["mean_s"] - df["p10_s"], "color": "#8b93a1"})
+    fig.update_layout(yaxis={"autorange": "reversed"}, xaxis_title="Total race time (s): dot = mean, whiskers = P10 to P90", showlegend=False)
     lo = float(df["p10_s"].min())
     fig.update_xaxes(range=[lo - 5, float(df["p90_s"].max()) + 5])
     return fig
@@ -36,7 +37,9 @@ def pit_duration_fig(df: pd.DataFrame):
     if lacks(df, "driver", "stop_number", "pit_lane_time_seconds", "is_slow_stop"):
         return empty("No pit stops")
     fig = go.Figure()
-    fig.add_bar(x=df["driver"] + " #" + df["stop_number"].astype(str), y=df["pit_lane_time_seconds"], name="pit-lane time",
-                marker_color=["#e10600" if s else "#3da5ff" for s in df["is_slow_stop"].fillna(False)])
-    fig.update_layout(yaxis_title="Pit-lane time (s): not stationary time", xaxis_title="")
+    slow = df["is_slow_stop"].fillna(False).astype(bool)
+    label = df["driver"] + " #" + df["stop_number"].astype(str)
+    fig.add_bar(x=label[~slow], y=df.loc[~slow, "pit_lane_time_seconds"], name="normal stop", marker_color="#3da5ff")
+    fig.add_bar(x=label[slow], y=df.loc[slow, "pit_lane_time_seconds"], name="slow stop (flagged by fct_pit_stops)", marker_color="#e10600")
+    fig.update_layout(yaxis_title="Pit-lane time (s): not stationary time", xaxis_title="", barmode="overlay", xaxis={"categoryorder": "array", "categoryarray": list(label)})
     return fig

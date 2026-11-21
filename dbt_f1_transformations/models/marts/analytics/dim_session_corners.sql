@@ -63,11 +63,34 @@ bounds AS (
         a.distance_bin + {{ (var('corner_exit_distance_m') / var('distance_bin_metres')) | int }} AS exit_bin
     FROM apexes a
 ),
+-- The distance axis is sparse where the car is fast: car data arrives about 4 times a second, so at 300 km/h a 10 m bin often has no row at all.
+-- An exact-bin join for the entry and exit points therefore found nothing on fast corners and the turn angle was NULL. Use the NEAREST bin that has a
+-- position, within var corner_geometry_search_bins.
+entry_pts AS (
+    SELECT session_key, corner_number, x AS entry_x, y AS entry_y
+    FROM (
+        SELECT b.session_key, b.corner_number, e.x, e.y,
+               ROW_NUMBER() OVER (PARTITION BY b.session_key, b.corner_number ORDER BY ABS(e.distance_bin - b.entry_bin)) AS rn
+        FROM bounds b
+        JOIN trace e ON b.session_key = e.session_key AND ABS(e.distance_bin - b.entry_bin) <= {{ var('corner_geometry_search_bins') }}
+        WHERE e.x IS NOT NULL AND e.y IS NOT NULL
+    ) ranked WHERE rn = 1
+),
+exit_pts AS (
+    SELECT session_key, corner_number, x AS exit_x, y AS exit_y
+    FROM (
+        SELECT b.session_key, b.corner_number, e.x, e.y,
+               ROW_NUMBER() OVER (PARTITION BY b.session_key, b.corner_number ORDER BY ABS(e.distance_bin - b.exit_bin)) AS rn
+        FROM bounds b
+        JOIN trace e ON b.session_key = e.session_key AND ABS(e.distance_bin - b.exit_bin) <= {{ var('corner_geometry_search_bins') }}
+        WHERE e.x IS NOT NULL AND e.y IS NOT NULL
+    ) ranked WHERE rn = 1
+),
 geom AS (
-    SELECT b.*, e.x AS entry_x, e.y AS entry_y, x_.x AS exit_x, x_.y AS exit_y
+    SELECT b.*, en.entry_x, en.entry_y, ex.exit_x, ex.exit_y
     FROM bounds b
-    LEFT JOIN trace e ON b.session_key = e.session_key AND e.distance_bin = b.entry_bin
-    LEFT JOIN trace x_ ON b.session_key = x_.session_key AND x_.distance_bin = b.exit_bin
+    LEFT JOIN entry_pts en ON b.session_key = en.session_key AND b.corner_number = en.corner_number
+    LEFT JOIN exit_pts ex ON b.session_key = ex.session_key AND b.corner_number = ex.corner_number
 ),
 turns AS (
     -- radians to degrees by hand: BigQuery has no DEGREES function
@@ -88,7 +111,9 @@ SELECT
     entry_bin, exit_bin,
     avg_speed_kph AS reference_apex_speed_kph,
     CASE WHEN raw_turn > 180 THEN raw_turn - 360 WHEN raw_turn < -180 THEN raw_turn + 360 ELSE raw_turn END AS turn_angle_deg,
-    CASE WHEN (CASE WHEN raw_turn > 180 THEN raw_turn - 360 WHEN raw_turn < -180 THEN raw_turn + 360 ELSE raw_turn END) > 0
+    -- NULL when the angle could not be measured: this used to fall through to 'RIGHT', which invented a direction for every corner without an angle
+    CASE WHEN raw_turn IS NULL THEN NULL
+         WHEN (CASE WHEN raw_turn > 180 THEN raw_turn - 360 WHEN raw_turn < -180 THEN raw_turn + 360 ELSE raw_turn END) > 0
          THEN 'LEFT' ELSE 'RIGHT' END AS turn_direction,
     CASE WHEN avg_speed_kph < {{ var('corner_slow_kph') }} THEN 'SLOW'
          WHEN avg_speed_kph >= {{ var('corner_fast_kph') }} THEN 'FAST' ELSE 'MEDIUM' END AS speed_class,

@@ -139,3 +139,14 @@ def test_calibration_uses_driver_values_else_median_and_records_fallbacks(wareho
     assert "LOW SAMPLE" in prov["sc_hazard"]
     _, models_all, _ = load_inputs(warehouse, 9158)
     assert models_all["MEDIUM"].degradation == pytest.approx(0.07)                    # median of 0.06 and 0.08
+
+
+def test_p_best_is_shared_between_tied_strategies_and_sums_to_one():
+    # With no wear and no safety car, 10 laps on MEDIUM then 20 on HARD costs exactly the same as 20 on HARD then 10 on MEDIUM (identical totals).
+    # argmin used to give every simulation to whichever of the two came first, so equivalent strategies had p_best of 1.0 and 0.0.
+    models = {"MEDIUM": CompoundModel(90.0, 0.0), "HARD": CompoundModel(90.0, 0.0)}
+    a = Strategy((("MEDIUM", 10), ("HARD", 20)))
+    b = Strategy((("HARD", 20), ("MEDIUM", 10)))
+    rows = evaluate(det_ctx(pit_loss=20.0, fuel_effect=0.0), models, [a, b], n_sims=50).summary()
+    assert sum(r["p_best"] for r in rows) == pytest.approx(1.0)
+    assert [r["p_best"] for r in rows] == pytest.approx([0.5, 0.5])

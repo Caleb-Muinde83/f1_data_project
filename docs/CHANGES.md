@@ -273,3 +273,20 @@ verified, and what remains unverified or not built.
 * `dbt_f1_transformations/macros/.gitkeep`
 * `dbt_f1_transformations/seeds/.gitkeep`
 * `dbt_f1_transformations/tests/.gitkeep`
+
+## Dashboard review against screenshots (round 7)
+
+Found by reading the dashboard screenshots of the real warehouse; fixes are covered by `dashboards/tests/test_review_fixes.py`, `test_p_best_is_shared...` and `assert_corner_direction_needs_angle`.
+
+* **Corner turn direction was invented.** `dim_session_corners` reported `RIGHT` for every corner whose turn angle was NULL, and the angle was NULL whenever the exact entry or exit distance bin had no sample (car data is about 4 Hz, so at 300 km/h a 10 m bin is often empty). Entry and exit points now use the nearest bin with a position (`corner_geometry_search_bins`), the direction is NULL when the angle is, and `fct_corner_performance` entry/exit speeds and corner time use the bins within 2 of the entry/exit point. Reproduced on synthetic data by deleting the exact entry/exit bins: the old model gave 0 of 9 angles and 9 invented RIGHTs, the new one measures all 9.
+* **Corner averages only use complete laps.** `fct_corner_performance` now carries `is_complete_lap` and the dashboard query requires it (the trace model says incomplete laps must not be compared point by point).
+* **Strategy simulator `p_best`** gave all the credit of a tie to the first strategy (`argmin`); tied strategies now share it.
+* **Strategy chart** drew bars on an axis that did not start at zero; it now draws the mean with P10 to P90 whiskers.
+* **Driver colours** are fixed per driver on every chart (they changed from chart to chart and repeated beyond ten drivers).
+* **Replay**: a penalty's `served_lap` is hidden until that lap is reached, future events on the event chart are dimmed, and a safety car is drawn as a span.
+* **Pace chart** no longer draws the rolling line across missing (safety-car) laps; **telemetry overlay** breaks the line across a data dropout and labels an incomplete lap.
+* **Sector heatmap** no longer requires "representative" laps (a best sector is a minimum, so slow laps cannot hurt it); on the real qualifying session the six fastest qualifiers were missing.
+* **Labels**: "Championship before this weekend" is now "going into the race" (it includes the Sprint); the safety-car hazard legend shows the event and number of races instead of the circuit key; the fuel-corrected axis is named; the pit-stop chart has a legend; the undercut table can hide stops made under a safety car.
+* **Pit stops**: a stop is now neutralised when its in-lap OR out-lap runs under SC/VSC/red (lap-9 stops whose out-lap was the first safety-car lap were counted as green and showed 50 s "time lost"), and a lap-1 stop has no time lost. This feeds `fct_pit_loss_by_circuit` and `avg_green_flag_time_lost_seconds`. Guarded by `assert_green_stops_have_green_laps`.
+* **Sector heatmap, second correction**: on the real qualifying session every driver's fastest lap was flagged `is_out_lap`, so excluding in/out laps would have hidden the same drivers; the heatmap now uses every fully timed lap.
+* **Still to fix** (found by `diagnostics_real_data.sql`): in qualifying every push lap is flagged `is_out_lap` and the driver's median "clean" lap is 112 to 131 s against 92 s push laps, so `is_representative_lap` is inverted for qualifying and practice. The cause is in how `int_lap_context` combines the API's `is_pit_out_lap` with the pit table; it needs the lap-by-lap query 7 before it is changed.

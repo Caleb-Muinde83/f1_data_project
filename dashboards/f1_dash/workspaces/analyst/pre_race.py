@@ -23,8 +23,8 @@ def render(con):
         else:
             st.dataframe(grid.drop(columns=["driver_number"]), width="stretch", hide_index=True)
     with c2:
-        panel("Championship before this weekend", "derived", source="fct_points_progression",
-              note="Computed from results of sessions that started before the cut-off.")
+        panel("Championship going into the race", "derived", source="fct_points_progression",
+              note="Computed from results of sessions that started before the cut-off. That includes this weekend's Sprint, if there is one.")
         pts = data.points_before(con, ctx.year, ctx.target_start)
         st.dataframe(pts, width="stretch", hide_index=True) if not pts.empty else st.caption("No earlier scored session this season.")
 

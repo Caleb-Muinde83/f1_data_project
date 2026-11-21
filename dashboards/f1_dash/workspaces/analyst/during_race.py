@@ -32,7 +32,7 @@ def render(con):
                   ("Track", ((laps[laps.lap_number == lap].track_status.dropna().mode().iloc[0]) if laps[laps.lap_number == lap].track_status.notna().any() else "-"), "race control")])
 
     panel("Race events", "measured", source="fct_safety_car_events, fct_penalties, fct_pit_stops, fct_race_results, fct_fastest_laps",
-          note="Every event on one lap axis. Use 'Jump to event' above to move the replay to it.")
+          note="Every event on one lap axis; events after the replay clock are dimmed. Use 'Jump to event' above to move the replay to it.")
     plot.show(charts.event_timeline_fig(events, lap), st)
     panel("Timing tower", "measured", source="fct_lap_performance", note="Position and gaps come from cumulative race time, so they always agree with the position chart below.")
     timing.show_tower(laps, lap, ctx.driver, order)
@@ -65,4 +65,4 @@ def render(con):
     nz = data.neutralisations(con, ctx.session_key)
     st.dataframe(nz[nz.start_lap <= lap], width="stretch", hide_index=True)
     pn = data.penalties(con, ctx.session_key)
-    st.dataframe(pn[pn.lap_number <= lap], width="stretch", hide_index=True)
+    st.dataframe(data.penalties_so_far(pn, lap), width="stretch", hide_index=True)
