@@ -41,6 +41,7 @@ vars:
   corner_entry_distance_m: 150
   corner_exit_distance_m: 100
   corner_brake_lookback_m: 100       # how far before entry a brake application still belongs to this corner
+  stale_telemetry_min_samples: 8      # this many consecutive identical non-zero speed+gear samples (about 2 s) are a frozen reading, not driving
   corner_geometry_search_bins: 5     # nearest bin (with a position) searched for a corner's entry and exit point; the axis is sparse where the car is fast
   corner_slow_kph: 120               # apex speed classes
   corner_fast_kph: 220

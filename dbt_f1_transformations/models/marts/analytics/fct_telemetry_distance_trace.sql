@@ -6,6 +6,11 @@
   laps) keep their raw distance and are marked is_complete_lap = FALSE; do not compare them point by point.
   Laps through the pit lane follow a different path but are still rescaled; filter on is_representative_lap upstream.
   Incremental by session, like fct_telemetry.
+
+  Unavailable readings are masked, not dropped (the distance axis still needs every sample): a throttle above 100 means "no data" (the value 104
+  appears in the raw feed), and a run of var stale_telemetry_min_samples or more consecutive samples with the same non-zero speed and gear is a
+  frozen reading, not driving (on real data a qualifying lap started with 3 s of identical 168 km/h, gear 4, throttle 104). The channels of those
+  samples are NULL in the output, so a chart shows a gap instead of a flat line and a minimum speed is not taken from them.
 #}
 {{ config(
     materialized='incremental',
@@ -26,6 +31,23 @@ WITH base AS (
       AND t.session_key NOT IN (SELECT DISTINCT session_key FROM {{ this }})
     {% endif %}
 ),
+changes AS (
+    SELECT
+        *,
+        CASE WHEN speed = LAG(speed) OVER w AND gear = LAG(gear) OVER w THEN 0 ELSE 1 END AS is_change
+    FROM base
+    WINDOW w AS (PARTITION BY session_key, driver_number, lap_number ORDER BY telemetry_timestamp)
+),
+runs AS (
+    SELECT
+        *,
+        SUM(is_change) OVER (PARTITION BY session_key, driver_number, lap_number ORDER BY telemetry_timestamp ROWS UNBOUNDED PRECEDING) AS run_id
+    FROM changes
+),
+flagged AS (
+    SELECT *, (run_len >= {{ var('stale_telemetry_min_samples') }} AND speed > 0) AS is_stale
+    FROM (SELECT *, COUNT(*) OVER (PARTITION BY session_key, driver_number, lap_number, run_id) AS run_len FROM runs) r
+),
 stepped AS (
     SELECT
         *,
@@ -33,7 +55,7 @@ stepped AS (
         -- window MIN/MAX run over integer microseconds, not TIMESTAMPs (some engines mishandle windowed MIN/MAX of TIMESTAMP)
         MIN({{ f1_epoch_us('telemetry_timestamp') }}) OVER (PARTITION BY session_key, driver_number, lap_number) AS lap_first_us,
         MAX({{ f1_epoch_us('telemetry_timestamp') }}) OVER (PARTITION BY session_key, driver_number, lap_number) AS lap_last_us
-    FROM base
+    FROM flagged
     WINDOW w AS (PARTITION BY session_key, driver_number, lap_number ORDER BY telemetry_timestamp)
 ),
 integrated AS (
@@ -86,11 +108,11 @@ SELECT
     distance_bin,
     distance_bin * {{ var('distance_bin_metres') }} AS distance_m,
     MIN(lap_elapsed_seconds) AS elapsed_seconds,
-    AVG(speed) AS avg_speed_kph,
-    MIN(speed) AS min_speed_kph,
-    AVG(throttle) AS avg_throttle,
-    MAX(brake) AS max_brake,
-    {{ f1_cast('ROUND(AVG(gear))', 'int') }} AS gear,
+    AVG(CASE WHEN NOT is_stale THEN speed END) AS avg_speed_kph,
+    MIN(CASE WHEN NOT is_stale THEN speed END) AS min_speed_kph,
+    AVG(CASE WHEN NOT is_stale AND throttle <= 100 THEN throttle END) AS avg_throttle,
+    MAX(CASE WHEN NOT is_stale THEN brake END) AS max_brake,
+    {{ f1_cast('ROUND(AVG(CASE WHEN NOT is_stale THEN gear END))', 'int') }} AS gear,
     AVG(x) AS x, AVG(y) AS y,
     MIN(is_complete_lap) AS is_complete_lap,
     MIN(track_length_m) AS track_length_m

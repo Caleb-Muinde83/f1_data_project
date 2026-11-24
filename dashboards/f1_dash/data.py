@@ -243,8 +243,10 @@ def lap_table(con, session_key: int):
 
 def telemetry_lap_summary(con, session_key: int):
     return q(con, """SELECT d.driver_acronym AS driver, t.driver_number, t.lap_number, t.top_speed_kph, t.min_speed_kph, t.avg_speed_kph,
-        t.full_throttle_fraction, t.braking_fraction, t.braking_zone_count, t.drs_open_fraction, t.max_gear
+        t.full_throttle_fraction, t.braking_fraction, t.braking_zone_count, t.drs_open_fraction, t.max_gear,
+        l.is_in_lap, l.is_out_lap, l.is_representative_lap
         FROM fct_telemetry_lap_summary t LEFT JOIN dim_driver_session d USING (session_key, driver_number)
+        LEFT JOIN fct_lap_performance l ON l.session_key = t.session_key AND l.driver_number = t.driver_number AND l.lap_number = t.lap_number
         WHERE t.session_key = ? ORDER BY t.lap_number, d.driver_acronym""", [session_key])
 
 
@@ -261,13 +263,15 @@ def distance_trace(con, session_key: int, driver_number: int, lap_number: int):
              [session_key, driver_number, lap_number])
 
 
-def overtakes(con, session_key: int):
+def overtakes(con, session_key: int, include_first_lap: bool = True):
+    """Overtakes of a session. Lap 1 is the start shuffle: the feed records every swap of the first corners (on the real data one car passed the same rival
+    and was passed back within the lap, all landing in the same position), so pages hide it by default and say so."""
     return q(con, """SELECT o.lap_number, a.driver_acronym AS overtaker, b.driver_acronym AS overtaken, o.post_overtake_position AS new_pos,
         o.was_in_drs_range_before_pass AS drs_range_proxy, o.is_probable_pit_cycle_pass AS pit_cycle, o.overtaker_tyre_compound, o.tyre_age_delta
         FROM fct_overtakes o
         LEFT JOIN dim_driver_session a ON a.session_key = o.session_key AND a.driver_number = o.overtaking_driver_number
         LEFT JOIN dim_driver_session b ON b.session_key = o.session_key AND b.driver_number = o.overtaken_driver_number
-        WHERE o.session_key = ? ORDER BY o.lap_number""", [session_key])
+        WHERE o.session_key = ? AND (? OR o.lap_number > 1) ORDER BY o.lap_number""", [session_key, bool(include_first_lap)])
 
 
 def penalties(con, session_key: int):

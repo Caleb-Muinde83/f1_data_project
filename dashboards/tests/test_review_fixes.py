@@ -74,3 +74,58 @@ def test_telemetry_overlay_breaks_the_line_across_a_dropout_and_labels_an_incomp
     fig = charts.telemetry_overlay_fig(d, pd.DataFrame(), "VER L19", "")
     speed = fig.data[0]
     assert "(telemetry gaps)" in speed.name and any(np.isnan(v) for v in speed.y)
+
+
+# ---- the four items that were left open, plus the per-lap telemetry summary ----
+import duckdb
+from f1_dash import insights
+from f1_dash.components import simulator
+
+
+def test_a_pace_fit_that_significantly_improves_is_not_a_degradation_model_but_a_flat_one_is_kept():
+    fits = pd.DataFrame({"session_name": "Race", "clean_laps": [14, 14, 14, 14, 6], "fresh_tyre_pace_seconds": 95.0,
+                         "degradation_seconds_per_lap": [-0.05, -0.01, 0.0, 0.05, -0.05], "r_squared": [0.5, 0.01, 0.0, 0.5, 0.5]})
+    assert list(insights.usable_pace_fits(fits)) == [False, True, True, True, False]     # last: too few laps
+
+
+def test_anomaly_screen_uses_fuel_corrected_time_so_fuel_burn_is_not_flagged_as_unusual():
+    laps = pd.DataFrame({"driver_number": 1, "lap_number": range(1, 31), "is_in_lap": False, "is_out_lap": False, "track_status": "GREEN"})
+    laps["fuel_corrected_lap_time_seconds"] = 95.0 + np.tile([0.0, 0.05, -0.05], 10)
+    laps["lap_time_seconds"] = laps["fuel_corrected_lap_time_seconds"] + 3.0 - 0.1 * laps["lap_number"]     # raw laps get 3 s faster over the race
+    raw_only = insights.robust_anomalies(laps.drop(columns="fuel_corrected_lap_time_seconds"))
+    corrected = insights.robust_anomalies(laps)
+    trend = lambda d: abs(np.corrcoef(d["lap_number"], d["z"])[0, 1])
+    assert trend(raw_only) > 0.9          # on raw times the z-score is just a ramp from the first lap to the last (fuel burning off), as on the real data
+    assert trend(corrected) < 0.3 and not corrected["is_anomaly"].any()
+
+
+def _warehouse():
+    con = duckdb.connect(":memory:")
+    con.execute("CREATE TABLE dim_driver_session (session_key INT, driver_number INT, driver_acronym VARCHAR)")
+    con.execute("INSERT INTO dim_driver_session VALUES (1, 1, 'ANT'), (1, 2, 'VER')")
+    con.execute("""CREATE TABLE fct_overtakes (session_key INT, lap_number INT, overtaking_driver_number INT, overtaken_driver_number INT, post_overtake_position INT,
+                   was_in_drs_range_before_pass BOOLEAN, is_probable_pit_cycle_pass BOOLEAN, overtaker_tyre_compound VARCHAR, tyre_age_delta INT)""")
+    con.execute("INSERT INTO fct_overtakes VALUES (1, 1, 1, 2, 15, TRUE, FALSE, 'SOFT', 0), (1, 1, 2, 1, 15, TRUE, FALSE, 'SOFT', 0), (1, 7, 1, 2, 3, FALSE, FALSE, 'SOFT', 2)")
+    con.execute("CREATE TABLE fct_telemetry_lap_summary (session_key INT, driver_number INT, lap_number INT, top_speed_kph DOUBLE, min_speed_kph DOUBLE, avg_speed_kph DOUBLE,"
+                " full_throttle_fraction DOUBLE, braking_fraction DOUBLE, braking_zone_count INT, drs_open_fraction DOUBLE, max_gear INT)")
+    con.execute("INSERT INTO fct_telemetry_lap_summary VALUES (1, 1, 1, 330, 80, 200, .6, .2, 5, 0, 8), (1, 1, 2, 270, 60, 150, .1, .3, 5, 0, 7)")
+    con.execute("CREATE TABLE fct_lap_performance (session_key INT, driver_number INT, lap_number INT, is_in_lap BOOLEAN, is_out_lap BOOLEAN, is_representative_lap BOOLEAN)")
+    con.execute("INSERT INTO fct_lap_performance VALUES (1, 1, 1, FALSE, FALSE, TRUE), (1, 1, 2, TRUE, FALSE, FALSE)")
+    return con
+
+
+def test_overtakes_hide_the_lap_1_start_shuffle_unless_asked():
+    con = _warehouse()
+    assert list(data.overtakes(con, 1)["lap_number"]) == [1, 1, 7]
+    assert list(data.overtakes(con, 1, include_first_lap=False)["lap_number"]) == [7]
+
+
+def test_lap_summary_carries_the_push_lap_flags_so_a_page_can_hide_in_and_out_laps():
+    ts = data.telemetry_lap_summary(_warehouse(), 1)
+    assert list(ts["is_representative_lap"]) == [True, False] and list(ts["is_in_lap"]) == [False, True]
+
+
+def test_the_simulator_ranking_is_meaningless_only_when_every_compound_is_clipped():
+    assert simulator.ranking_is_meaningless(["HARD", "MEDIUM"], {"HARD": 1, "MEDIUM": 2})
+    assert not simulator.ranking_is_meaningless(["MEDIUM"], {"HARD": 1, "MEDIUM": 2})
+    assert not simulator.ranking_is_meaningless([], {"HARD": 1, "MEDIUM": 2})

@@ -77,7 +77,7 @@ with_stint_and_pit AS (
         st.stint_number,
         st.tyre_compound,
         st.tyre_age_at_start + (l.lap_number - st.lap_start) AS tyre_age_this_lap,
-        (p.lap_number IS NOT NULL) AS is_in_lap,
+        (p.lap_number IS NOT NULL) AS has_pit_record,
         p.pit_lane_time_seconds,
         p.pit_timestamp
     FROM calculated_laps l
@@ -97,10 +97,18 @@ with_stint_and_pit AS (
     ) = 1
 ),
 
+-- Out-laps come from the API flag (is_pit_out_lap). In a race the pit table's lap is the IN-lap, so "the lap after a pit record" was also the out-lap. In
+-- practice and qualifying OpenF1 attaches the pit record to the OUT-lap (the garage lap), so that rule flagged every PUSH lap as an out-lap and the
+-- driver's median "clean" lap became a 112 to 131 s cool-down lap. The pit-table rule is therefore only a fallback for drivers with no API flag at all.
+-- In-laps: a pit record on a lap that is not itself an API out-lap, or the lap before an API out-lap.
 with_out_lap AS (
     SELECT
         *,
-        (is_pit_out_lap OR COALESCE(LAG(is_in_lap) OVER (PARTITION BY session_key, driver_number ORDER BY lap_number), FALSE)) AS is_out_lap
+        (COALESCE(is_pit_out_lap, FALSE)
+         OR (MAX(CASE WHEN is_pit_out_lap THEN 1 ELSE 0 END) OVER (PARTITION BY session_key, driver_number) = 0
+             AND COALESCE(LAG(has_pit_record) OVER (PARTITION BY session_key, driver_number ORDER BY lap_number), FALSE))) AS is_out_lap,
+        ((has_pit_record AND NOT COALESCE(is_pit_out_lap, FALSE))
+         OR COALESCE(LEAD(is_pit_out_lap) OVER (PARTITION BY session_key, driver_number ORDER BY lap_number), FALSE)) AS is_in_lap
     FROM with_stint_and_pit
 ),
 

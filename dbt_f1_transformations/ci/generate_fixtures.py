@@ -41,7 +41,7 @@ OUTLAP_EXTRA = {44: 15}
 RETIRED = {(9003, 44): 8}   # (session, driver): last completed lap; the next lap row exists but has NO duration, and no laps follow
 meetings = [{"meeting_key": m, "year": 2024, "circuit_key": 10 + m % 10, "meeting_name": f"GP {m}", "meeting_official_name": f"Official GP {m}",
              "location": f"City {m}", "country_key": 1, "country_code": "XXX", "circuit_short_name": f"Circuit{m}",
-             "date_start": iso(datetime(2024, 3, 1 + 8 * (m - 1001), 11, tzinfo=UTC)), "gmt_offset": "00:00:00"} for m in (1001, 1002)]
+             "date_start": iso(datetime(2024, 3, 1 + 8 * (m - 1001), 11, tzinfo=UTC)), "gmt_offset": "00:00:00"} for m in (1001, 1002, 1003)]
 save("meetings", "global", meetings)
 sessions, drivers_all = [], []
 for key, mk, stype, sname, start in SESSIONS:
@@ -57,6 +57,19 @@ sessions.append({"session_key": 9004, "meeting_key": 1002, "circuit_key": 10 + 1
 for n, (full, acr, team) in DRIVERS.items():
     drivers_all.append({"driver_number": n, "session_key": 9004, "meeting_key": 1002, "full_name": full, "name_acronym": acr, "team_name": team,
                         "team_colour": "FF0000", "country_code": "GBR", "headshot_url": "http://x/h.png"})
+# A Sprint weekend (meeting 1003) whose starting_grid the API does not have at all, as for the real 2025 Brazilian Sprint: Sprint Qualifying 9005 and Sprint 9006 have
+# classifications but no starting_grid rows, so the Sprint's grid can only come from the Sprint Qualifying classification.
+for key, stype, sname, start in ((9005, "Qualifying", "Sprint Qualifying", datetime(2024, 3, 17, 10, 0, tzinfo=UTC)), (9006, "Race", "Sprint", datetime(2024, 3, 17, 15, 0, tzinfo=UTC))):
+    sessions.append({"session_key": key, "meeting_key": 1003, "circuit_key": 10 + 1003 % 10, "year": 2024, "session_name": sname, "session_type": stype,
+                     "date_start": iso(start), "date_end": iso(start + timedelta(minutes=45)), "gmt_offset": "00:00:00"})
+    for n, (full, acr, team) in DRIVERS.items():
+        drivers_all.append({"driver_number": n, "session_key": key, "meeting_key": 1003, "full_name": full, "name_acronym": acr, "team_name": team,
+                            "team_colour": "FF0000", "country_code": "GBR", "headshot_url": "http://x/h.png"})
+save("session_result", 9005, [{"session_key": 9005, "meeting_key": 1003, "driver_number": n, "position": p, "dnf": False, "dns": False, "dsq": False, "number_of_laps": 12,
+                               "duration": json.dumps([round(89.5 + 0.3 * p - i * 0.4, 3) for i in range(3)]), "gap_to_leader": json.dumps([0.0, round(0.3 * (p - 1), 3), round(0.3 * (p - 1), 3)])}
+                              for p, n in enumerate((63, 44, 1, 11), 1)])
+save("session_result", 9006, [{"session_key": 9006, "meeting_key": 1003, "driver_number": n, "position": p, "dnf": False, "dns": False, "dsq": False, "number_of_laps": 12,
+                               "duration": str(round(1100.0 + 2.5 * p, 3)), "gap_to_leader": str(round(2.5 * (p - 1), 3))} for p, n in enumerate((1, 63, 44, 11), 1)])
 save("sessions", "global", sessions); save("drivers", "global", drivers_all)
 
 def build_session(key, mk, stype, start):
@@ -89,13 +102,14 @@ def build_session(key, mk, stype, start):
             laps.append({"session_key": key, "meeting_key": mk, "driver_number": n, "lap_number": lap, "date_start": None if no_lap1 else iso(ds), "lap_duration": None if (partial or no_lap1) else round(d, 3),
                          "duration_sector_1": None if (partial or no_lap1) else round(s1, 3), "duration_sector_2": None if (partial or no_lap1) else round(s2, 3),
                          "duration_sector_3": None if (partial or no_lap1) else round(d - s1 - s2, 3),
-                         "i1_speed": 280 + n % 7, "i2_speed": 250 + n % 5, "st_speed": 320 + n % 9, "is_pit_out_lap": bool(pit_lap and lap == pit_lap + 1),
+                         "i1_speed": 280 + n % 7, "i2_speed": 250 + n % 5, "st_speed": 320 + n % 9, "is_pit_out_lap": bool((pit_lap and lap == pit_lap + 1) or (not is_race and lap % 3 == 1)),
                          "segments_sector_1": json.dumps([2049, 2049]), "segments_sector_2": json.dumps([2049]), "segments_sector_3": json.dumps([2048])})
             starts[(n, lap)] = ds
             if not partial: cum[n] += d
             if pit_lap and lap == pit_lap:
                 pits.append({"session_key": key, "meeting_key": mk, "driver_number": n, "lap_number": lap, "date": iso(ds + timedelta(seconds=d - 20)), "pit_duration": 22.4})
-            if not is_race and lap == 3:      # practice/qualifying: a garage visit, reported as a 'pit stop' with minutes of pit-lane time
+            if not is_race and lap % 3 == 1:  # practice/qualifying: a garage visit, reported as a 'pit stop' with minutes of pit-lane time. As in the real data its
+                                              # pit record sits on the OUT-lap (an API out-lap), and the push lap follows it
                 pits.append({"session_key": key, "meeting_key": mk, "driver_number": n, "lap_number": lap, "date": iso(ds + timedelta(seconds=d - 20)), "pit_duration": 300.0 + n})
     return laps, starts, pits, stints, cum
 
@@ -184,8 +198,10 @@ for key, mk, stype, sname, start in SESSIONS:
             for k in range(steps):
                 ph = k / steps; spd = int(200 + 110 * math.sin(2 * math.pi * ph * 3))
                 brk = 100 if math.cos(2 * math.pi * ph * 3) < -0.7 else 0
+                stale = n == 44 and l["lap_number"] == 5 and k < 12      # as on the real data: the first 3 s of a lap frozen at 168 km/h, gear 4, throttle 104 (no data)
+                if stale: spd, brk = 168, 0
                 car.append({"session_key": key, "meeting_key": mk, "driver_number": n, "date": iso(t0 + timedelta(seconds=k * 0.25)), "rpm": 9000 + spd * 10, "speed": spd,
-                            "n_gear": 1 + spd // 45, "throttle": 0 if brk else 100, "brake": brk, "drs": 12 if (spd > 280 and not brk) else 0})
+                            "n_gear": 4 if stale else 1 + spd // 45, "throttle": 104 if stale else (0 if brk else 100), "brake": brk, "drs": 12 if (spd > 280 and not brk) else 0})
                 loc.append({"session_key": key, "meeting_key": mk, "driver_number": n, "date": iso(t0 + timedelta(seconds=k * 0.25 + 0.07)),
                             "x": 1000.0 * math.cos(2 * math.pi * ph), "y": 600.0 * math.sin(2 * math.pi * ph), "z": 10.0})
         # after the last timed lap: 90 s of slow driving (cool-down lap / pit lane). It must NOT be credited to that last lap.

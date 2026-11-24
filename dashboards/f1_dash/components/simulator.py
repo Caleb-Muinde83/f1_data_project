@@ -28,6 +28,12 @@ def viable(con, session_keys, driver=None, total_laps=None):
     return ok
 
 
+def ranking_is_meaningless(clipped, models) -> bool:
+    """True when no compound has a measured wear rate: every fitted slope was clipped to 0, so the ranking only reflects the pace gap between compounds and
+    pit timing (it puts the short stint on the slower compound), not anything about tyre life."""
+    return bool(clipped) and set(clipped) >= set(models)
+
+
 def render(con, calib_session: int, total_laps: int = None, driver: int = None, warning: str = "", key: str = "sim"):
     panel("Strategy simulator (Monte Carlo)", "simulated", source="analytics/f1_strategy, calibrated from dbt marts",
           note="Decision support, not a forecast: it ignores traffic, tyre cliffs, track evolution and rival reactions, and is not validated against real races.")
@@ -48,6 +54,12 @@ def render(con, calib_session: int, total_laps: int = None, driver: int = None, 
         st.markdown(f'<div class="f1-alert crit">Tyre degradation could not be estimated for {", ".join(clipped)} (the fitted slope was negative and was clipped to 0). '
                     f'With no wear modelled, the ranking below reflects only the pace difference between compounds and the pit timing: it says nothing about when the tyres wear out. '
                     f'Calibrate from a longer, cleaner session if you can.</div>', unsafe_allow_html=True)
+        if ranking_is_meaningless(clipped, models):
+            with st.expander("Where the inputs came from"):
+                st.json(prov)
+            if not st.checkbox("Show the ranking anyway (pace gap and pit timing only, no tyre wear)", value=False, key=f"{key}_anyway"):
+                st.caption("The ranking is hidden because no compound has a measured wear rate: any order it gave would come from the pace gap alone.")
+                return
     c1, c2, c3 = st.columns(3)
     hazard = c1.slider("Safety car chance per lap", 0.0, 0.10, float(min(ctx.sc_hazard_per_lap, 0.10)), 0.005, key=f"{key}_sc")
     pit_loss = c2.slider("Pit loss (s)", 15.0, 35.0, float(min(max(ctx.pit_loss, 15.0), 35.0)), 0.5, key=f"{key}_pit")

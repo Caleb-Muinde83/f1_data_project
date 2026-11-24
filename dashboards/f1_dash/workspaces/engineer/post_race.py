@@ -35,7 +35,7 @@ def render(con):
         plot.show(charts.corner_fig(insights.field_median_corners(cn, sel)), st)
         st.dataframe(cn[cn["driver"].isin(sel)] if not cn.empty else cn, width="stretch", hide_index=True)
     with t3:
-        panel("Degradation per stint", "estimated", source="fct_stints", note="Regression slope on clean laps: includes fuel, track evolution and traffic effects, not tyre wear alone.")
+        panel("Degradation per stint", "estimated", source="fct_stints", note="Regression slope on clean laps: includes fuel, track evolution and traffic effects, not tyre wear alone. A negative value means the car got faster over the stint (fuel burn and track evolution outweighed wear).")
         stints = data.stints(con, sk)
         plot.show(charts.degradation_fig(stints), st)
         st.dataframe(stints, width="stretch", hide_index=True)

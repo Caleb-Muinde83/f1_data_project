@@ -1,7 +1,12 @@
 {# Classification + championship points. Points follow the SEASON-AWARE seed f1_points_system (season, session_type, position),
    so a Sprint in 2021 scores 3-2-1 and a Sprint in 2023 scores 8-1. Seasons missing from the seed score 0 and are caught by
    tests/assert_every_season_has_points_scale.sql. The fastest-lap bonus applies to Race sessions up to
-   var fastest_lap_bonus_last_year for drivers finishing in the top 10. DSQ/DNS score 0. #}
+   var fastest_lap_bonus_last_year for drivers finishing in the top 10. DSQ/DNS score 0.
+
+   Grid: from starting_grid (grid_source 'starting_grid'), else from the starting_grid rows of the session that set the grid ('starting_grid_via_qualifying').
+   When OpenF1 has NO starting_grid for a session at all (the 2025 Brazilian Sprint: its Sprint Qualifying returns "No results found"), the grid falls back to the
+   classification of the session that set it ('qualifying_classification'). That is an approximation: grid penalties are not applied. It is never mixed with the
+   feed within one session. #}
 WITH results AS (
     SELECT * FROM {{ ref('stg_session_result') }}
 ),
@@ -27,15 +32,15 @@ grid_session AS (
 fastest AS (
     SELECT session_key, driver_number FROM {{ ref('fct_fastest_laps') }} WHERE is_overall_fastest_lap
 ),
-calc AS (
+calc_raw AS (
     SELECT
         r.session_key, r.meeting_key, r.driver_number,
         s.session_type, s.year, s.session_start_time,
-        COALESCE(g1.grid_position, g2.grid_position) AS grid_position,
-        CASE WHEN g1.grid_position IS NOT NULL THEN 'starting_grid' WHEN g2.grid_position IS NOT NULL THEN 'starting_grid_via_qualifying' END AS grid_source,
+        COALESCE(g1.grid_position, g2.grid_position) AS feed_grid,
+        CASE WHEN g1.grid_position IS NOT NULL THEN 'starting_grid' WHEN g2.grid_position IS NOT NULL THEN 'starting_grid_via_qualifying' END AS feed_source,
+        qr.position AS qualifying_position,
+        COUNT(COALESCE(g1.grid_position, g2.grid_position)) OVER (PARTITION BY r.session_key) AS feed_grid_rows,
         r.position AS final_position,
-        CASE WHEN COALESCE(g1.grid_position, g2.grid_position) IS NOT NULL AND r.position IS NOT NULL
-             THEN COALESCE(g1.grid_position, g2.grid_position) - r.position END AS positions_gained_or_lost,
         CASE
             WHEN r.dsq THEN 'DSQ' WHEN r.dns THEN 'DNS' WHEN r.dnf THEN 'DNF'
             WHEN r.gap_to_leader_lapped_text IS NOT NULL THEN 'Lapped'
@@ -54,8 +59,26 @@ calc AS (
     LEFT JOIN grid g1 ON r.session_key = g1.session_key AND r.driver_number = g1.driver_number
     LEFT JOIN grid_session gs ON r.session_key = gs.session_key
     LEFT JOIN grid g2 ON gs.grid_session_key = g2.session_key AND r.driver_number = g2.driver_number
+    LEFT JOIN results qr ON gs.grid_session_key = qr.session_key AND r.driver_number = qr.driver_number
     LEFT JOIN sessions s ON r.session_key = s.session_key
     LEFT JOIN fastest f ON r.session_key = f.session_key AND r.driver_number = f.driver_number
+),
+graded AS (
+    SELECT
+        *,
+        CASE WHEN feed_grid IS NOT NULL THEN feed_grid WHEN feed_grid_rows = 0 THEN qualifying_position END AS grid_position,
+        CASE WHEN feed_grid IS NOT NULL THEN feed_source WHEN feed_grid_rows = 0 AND qualifying_position IS NOT NULL THEN 'qualifying_classification' END AS grid_source
+    FROM calc_raw
+),
+calc AS (
+    SELECT
+        session_key, meeting_key, driver_number, session_type, year, session_start_time,
+        grid_position, grid_source,
+        final_position,
+        CASE WHEN grid_position IS NOT NULL AND final_position IS NOT NULL THEN grid_position - final_position END AS positions_gained_or_lost,
+        classification_status, laps_completed, race_time_seconds, gap_to_leader_seconds, gap_to_leader_lapped_text,
+        q1_seconds, q2_seconds, q3_seconds, race_duration, did_not_start, disqualified, set_session_fastest_lap
+    FROM graded
 )
 SELECT
     c.*,

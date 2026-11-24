@@ -59,7 +59,8 @@ def render(con):
         st.dataframe(ps[ps.lap_number <= lap], width="stretch", hide_index=True)
     with c4:
         panel("Overtakes so far", "estimated", source="fct_overtakes", note="DRS column is a gap proxy, not DRS activation.")
-        ov = data.overtakes(con, ctx.session_key)
+        lap1 = st.checkbox("Include lap 1 (the start shuffle: positions swap repeatedly)", value=False, key="ana_dur_ov1")
+        ov = data.overtakes(con, ctx.session_key, include_first_lap=lap1)
         st.dataframe(ov[ov.lap_number <= lap], width="stretch", hide_index=True)
     panel("Race events so far", "measured", source="fct_safety_car_events, fct_penalties")
     nz = data.neutralisations(con, ctx.session_key)

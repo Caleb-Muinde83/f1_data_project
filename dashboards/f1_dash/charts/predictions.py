@@ -44,7 +44,7 @@ def anomaly_fig(df: pd.DataFrame):
     # A retirement lap can score z = 60 and flatten every other point: the axis is clipped at +-12 (hover still shows the true score).
     d = df.assign(z_shown=df["z"].clip(-12, 12))
     fig = px.scatter(d, x="lap_number", y="z_shown", color=d["is_anomaly"].map({True: "anomalous", False: "normal"}), hover_data={"z": ":.1f", "z_shown": False},
-                     color_discrete_map={"anomalous": "#e10600", "normal": "#7a8699"}, labels={"z_shown": "Robust z-score of lap time (axis clipped at 12)", "lap_number": "Lap", "color": "Lap"})
+                     color_discrete_map={"anomalous": "#e10600", "normal": "#7a8699"}, labels={"z_shown": "Robust z-score of lap time, fuel-corrected in races (axis clipped at 12)", "lap_number": "Lap", "color": "Lap"})
     fig.add_hline(y=3, line_dash="dot"); fig.add_hline(y=-3, line_dash="dot")
     return fig
 

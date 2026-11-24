@@ -12,7 +12,8 @@ SELECT
     MAX(speed) AS top_speed_kph,
     MIN(speed) AS min_speed_kph,
     AVG(speed) AS avg_speed_kph,
-    AVG({{ f1_cast('(throttle >= 99)', 'int') }}) AS full_throttle_fraction,
+    -- a throttle above 100 (the raw feed's 104) means 'no data': it must not count as full throttle
+    AVG(CASE WHEN throttle <= 100 THEN {{ f1_cast('(throttle >= 99)', 'int') }} END) AS full_throttle_fraction,
     AVG({{ f1_cast('(brake > 0)', 'int') }}) AS braking_fraction,
     -- a braking zone starts when brake goes from released (0) to applied (>0)
     COUNT(CASE WHEN brake > 0 AND COALESCE(prev_brake, 0) = 0 THEN 1 END) AS braking_zone_count,

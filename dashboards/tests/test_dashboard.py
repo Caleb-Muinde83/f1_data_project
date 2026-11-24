@@ -243,7 +243,8 @@ def test_grid_positions_resolve_directly_and_via_the_qualifying_session(con):
     src = data.q(con, "SELECT session_key, grid_source, COUNT(grid_position) AS n FROM fct_race_results WHERE session_type IN ('Race', 'Sprint') GROUP BY 1, 2 ORDER BY 1")
     # race 9002: grid keyed to Qualifying 9001. Sprint 9003 (OpenF1 type 'Race', name 'Sprint'): keyed to Sprint Qualifying 9004. Qualifying runs AFTER a sprint,
     # so a Sprint must never be matched to the weekend's Qualifying session.
-    assert dict(zip(src.session_key, src.grid_source)) == {9002: "starting_grid_via_qualifying", 9003: "starting_grid_via_qualifying"} and (src.n > 0).all()
+    # Sprint 9006 (meeting 1003) has NO starting_grid rows at all, as the real 2025 Brazilian Sprint: its grid is the Sprint Qualifying classification, never mixed with the feed.
+    assert dict(zip(src.session_key, src.grid_source)) == {9002: "starting_grid_via_qualifying", 9003: "starting_grid_via_qualifying", 9006: "qualifying_classification"} and (src.n > 0).all()
     assert not data.starting_grid(con, RACE).empty
 
 
@@ -263,7 +264,7 @@ def test_incident_summary_is_one_row_per_event_not_per_car(con):
 def test_data_health_checks_run_and_flag_nothing_on_the_fixtures(con):
     h = data.health_checks(con)
     assert len(h) == 5 and not (h.status == "warn").any(), h.to_dict("records")
-    assert h.set_index("check").loc["Races/sprints with starting-grid positions", "result"] == "2 of 2"
+    assert h.set_index("check").loc["Races/sprints with starting-grid positions", "result"] == "3 of 3"
 
 
 def test_telemetry_after_the_last_lap_is_not_credited_to_it(con):

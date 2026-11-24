@@ -74,6 +74,13 @@ def laps_until_loss(fit: dict, threshold_s: float = 1.0):
 def robust_anomalies(laps: pd.DataFrame, threshold: float = 3.0) -> pd.DataFrame:
     """Per-driver robust z-score (median / MAD) of lap time on green-flag, non-in/out laps. A SCREEN for unusual laps, not a diagnosis."""
     d = laps[~laps["is_in_lap"].fillna(False) & ~laps["is_out_lap"].fillna(False) & laps["lap_time_seconds"].notna()].copy()
+    # A race gets faster as fuel burns off, so raw lap times drift (z-scores from +3 early to -1.5 late on the real data) and the first laps look "unusual".
+    # Use the fuel-corrected time where the model provides one (races and sprints); practice and qualifying have none and use the raw time.
+    metric = "fuel_corrected_lap_time_seconds"
+    if metric in d and d[metric].notna().any():
+        d = d[d[metric].notna()]
+    else:
+        metric = "lap_time_seconds"
     if "track_status" in d:            # SC / VSC / yellow / red laps are slow by definition: not anomalies
         d = d[d["track_status"].fillna("GREEN") == "GREEN"]
     if d.empty:
@@ -83,7 +90,7 @@ def robust_anomalies(laps: pd.DataFrame, threshold: float = 3.0) -> pd.DataFrame
         med = s.median(); mad = (s - med).abs().median()
         scale = 1.4826 * mad if mad > 0 else (s.std(ddof=0) or np.nan)
         return (s - med) / scale if scale == scale and scale > 0 else s * 0.0
-    d["z"] = d.groupby("driver_number")["lap_time_seconds"].transform(z)
+    d["z"] = d.groupby("driver_number")[metric].transform(z)
     d["is_anomaly"] = d["z"].abs() > threshold
     return d
 
@@ -129,16 +136,23 @@ def engineering_alerts(laps: pd.DataFrame, penalties: pd.DataFrame, radio: pd.Da
     return sorted(out, key=lambda t: t[1])
 
 
-def usable_pace_fits(df: pd.DataFrame, min_laps: int = 8, max_abs_degradation: float = 1.5, pace_ratio: float = 1.07) -> pd.Series:
+def usable_pace_fits(df: pd.DataFrame, min_laps: int = 8, max_abs_degradation: float = 1.5, pace_ratio: float = 1.07, max_improving_t: float = 2.0) -> pd.Series:
     """Which rows of fct_compound_pace_model are worth showing. Practice/qualifying fits are often junk (real data: 164 s 'fresh pace' on a 95 s
     circuit, -16 s/lap 'degradation') because push, cool-down and in/out laps are mixed. A fit is usable when it has enough clean laps, a pace within
-    `pace_ratio` of the best fit of the SAME session, and a plausible slope. r_squared is deliberately not required: a flat, valid stint has r2 near 0."""
+    `pace_ratio` of the best fit of the SAME session, and a plausible slope. r_squared is deliberately not required: a flat, valid stint has r2 near 0.
+    A fit whose pace is significantly IMPROVING (slope below 0 with a t-statistic under -`max_improving_t`, from r_squared and the lap count) is not a degradation
+    model either: the car got faster because fuel burned off or the track evolved, so it is dropped. A flat or noisy slope (|t| small) is kept."""
     if df is None or df.empty:
         return pd.Series(dtype=bool)
     enough = df["clean_laps"] >= min_laps
     group = df["session_name"] if "session_name" in df else pd.Series("all", index=df.index)
     best = df["fresh_tyre_pace_seconds"].where(enough).groupby(group).transform("min")
-    return enough & (df["fresh_tyre_pace_seconds"] <= pace_ratio * best) & (df["degradation_seconds_per_lap"].abs() <= max_abs_degradation)
+    ok = enough & (df["fresh_tyre_pace_seconds"] <= pace_ratio * best) & (df["degradation_seconds_per_lap"].abs() <= max_abs_degradation)
+    if "r_squared" in df:
+        r2 = df["r_squared"].astype(float).clip(lower=0.0, upper=0.999)
+        t = np.sign(df["degradation_seconds_per_lap"]) * np.sqrt(r2 * (df["clean_laps"] - 2).clip(lower=1) / (1 - r2))
+        ok = ok & ~(t < -max_improving_t)
+    return ok
 
 
 def best_calibration_session(df: pd.DataFrame):

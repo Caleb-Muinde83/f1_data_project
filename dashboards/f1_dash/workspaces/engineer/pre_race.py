@@ -40,6 +40,10 @@ def render(con):
             panel("Per-lap telemetry summary", "derived", source="fct_telemetry_lap_summary")
             ts = data.telemetry_lap_summary(con, base_sk)
             ts = ts[ts["driver"].isin(pick.drivers(ctx, ts, "eng_pre_ts"))] if not ts.empty else ts
+            push = st.checkbox("Push laps only (hide in-laps, out-laps and slow laps)", value=True, key="eng_pre_ts_push",
+                               help="A qualifying session mixes push laps with garage, out- and cool-down laps, which makes top speed and throttle zig-zag from lap to lap.")
+            if push and not ts.empty and "is_representative_lap" in ts:
+                ts = ts[ts["is_representative_lap"].fillna(False).astype(bool)]
             c1, c2 = st.columns(2)
             plot.show(charts.lap_summary_fig(ts, "top_speed_kph", "Top speed (km/h)"), c1)
             plot.show(charts.lap_summary_fig(ts, "full_throttle_fraction", "Full-throttle fraction"), c2)
