@@ -1,5 +1,6 @@
 -- Road-car-impossible telemetry (negative or > 400 km/h) points to a parsing or unit problem.
 SELECT session_key, driver_number, telemetry_timestamp, speed
 FROM {{ ref('fct_telemetry') }}
-WHERE speed < 0 OR speed > 400
+WHERE (speed < 0 OR speed > 400)
+  AND {{ in_scope('session_key') }}
 LIMIT 100

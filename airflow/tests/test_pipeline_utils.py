@@ -45,3 +45,18 @@ def test_gcs_loader_skips_unchanged_and_uploads_new(tmp_path):
     out = upload_raw_files([same, new], bucket="b", hook=Fake())
     assert out == ["gs://b/raw/car_data/car_data_1_extracted.parquet"] and Fake.up == ["raw/car_data/car_data_1_extracted.parquet"]
     assert object_name_for("/x/championship_drivers_9_extracted.parquet") == "raw/championship_drivers/championship_drivers_9_extracted.parquet"
+
+
+def test_manifest_records_extraction_status(tmp_path):
+    from modules.pipeline_utils import build_manifest
+    a = _make(tmp_path, "laps_1_extracted.parquet", [{"x": 1}])
+    results = [
+        {"endpoint": "laps", "session_key": 1, "path": a, "status": "written"},
+        {"endpoint": "pit", "session_key": 1, "path": None, "status": "empty"},
+        {"endpoint": "weather", "session_key": 1, "path": str(tmp_path / "weather_1_extracted.parquet"), "status": "skipped"},
+    ]
+    m = json.load(open(build_manifest([a], str(tmp_path), "r2", results=results)))
+    assert m["status_counts"] == {"written": 1, "skipped": 1, "empty": 1}
+    assert {(e["endpoint"], e["status"]) for e in m["results"]} == {("laps", "written"), ("pit", "empty"), ("weather", "skipped")}
+    # a manifest written the old way (no results) is unchanged
+    assert "results" not in json.load(open(build_manifest([a], str(tmp_path), "r3")))

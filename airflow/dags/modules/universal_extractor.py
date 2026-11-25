@@ -40,9 +40,31 @@ def build_output_path(endpoint: str, session_val) -> str:
     return f"{base_path}/{endpoint}_{session_val}_extracted.parquet"
 
 
+# Outcome of one endpoint+session extraction. The orchestrator builds the dbt scope from these, so they are explicit:
+#   written : a Parquet file was (re)written by this run
+#   skipped : skip_existing=True and the file was already on disk; nothing was downloaded
+#   empty   : the API had nothing (404/422/no rows); no file was written by this run
+WRITTEN, SKIPPED, EMPTY = "written", "skipped", "empty"
+
+
+def _result(endpoint: str, session_val, path, status: str) -> dict:
+    """Structured, JSON-serialisable extraction result (safe to pass through Airflow XCom)."""
+    session_key = int(session_val) if str(session_val).isdigit() else str(session_val)
+    return {"endpoint": endpoint, "session_key": session_key, "path": path, "status": status}
+
+
 def extract_and_save_endpoint(endpoint: str, target_session="latest", api_params: dict = None, is_global: bool = False,
                               skip_existing: bool = False, run_id: str = None):
+    """Backwards-compatible wrapper: returns the Parquet path, or None when nothing was written or found.
+    New code should call extract_endpoint_result, which also says whether the file was written or skipped."""
+    return extract_endpoint_result(endpoint, target_session, api_params, is_global, skip_existing, run_id)["path"]
+
+
+def extract_endpoint_result(endpoint: str, target_session="latest", api_params: dict = None, is_global: bool = False,
+                            skip_existing: bool = False, run_id: str = None) -> dict:
     """
+    Same extraction as extract_and_save_endpoint, but returns {endpoint, session_key, path, status} with
+    status one of written / skipped / empty.
     Universally pulls data from any OpenF1 endpoint. 
     skip_existing: return the existing file untouched when it is already on disk (cheap incremental backfills).
     run_id: optional orchestrator run id, stamped into every row as _airflow_run_id for lineage/audit.
@@ -79,7 +101,7 @@ def extract_and_save_endpoint(endpoint: str, target_session="latest", api_params
         existing = build_output_path(endpoint, session_val)
         if os.path.exists(existing):
             logging.info(f"skip_existing=True and {existing} already exists. Skipping /{endpoint} for session {session_val}.")
-            return existing
+            return _result(endpoint, session_val, existing, SKIPPED)
 
     # ==========================================
     # ULTRA-HEAVY ENDPOINT PROTECTION & RETRIES
@@ -97,7 +119,7 @@ def extract_and_save_endpoint(endpoint: str, target_session="latest", api_params
                 error_msg = str(e)
                 if "404" in error_msg:
                     logging.warning(f"No driver data for session {session_val}. Skipping /{endpoint}.")
-                    return None
+                    return _result(endpoint, session_val, None, EMPTY)
                 elif "429" in error_msg and attempt < 2:
                     wait = 30 * (attempt + 1)
                     logging.warning(f"429 on /drivers for session {session_val}. Sleeping {wait}s (attempt {attempt+1}/3)...")
@@ -108,7 +130,7 @@ def extract_and_save_endpoint(endpoint: str, target_session="latest", api_params
         
         if not drivers:
             logging.warning(f"Failed to retrieve drivers for session {session_val}. Skipping /{endpoint}.")
-            return None
+            return _result(endpoint, session_val, None, EMPTY)
             
         # 2. Fetch Session Timestamps (Used if Time-Window Chunking is triggered)
         session_start, session_end = None, None
@@ -214,7 +236,7 @@ def extract_and_save_endpoint(endpoint: str, target_session="latest", api_params
                 error_msg = str(e)
                 if "404" in error_msg or "422" in error_msg:
                     logging.warning(f"Endpoint /{endpoint} unavailable for session {session_val}. Skipping gracefully.")
-                    return None
+                    return _result(endpoint, session_val, None, EMPTY)
                 elif "429" in error_msg and attempt < 2:
                     wait = 30 * (attempt + 1)  # 30s, 60s
                     logging.warning(f"429 on /{endpoint} session {session_val}. Sleeping {wait}s (attempt {attempt+1}/3)...")
@@ -225,7 +247,7 @@ def extract_and_save_endpoint(endpoint: str, target_session="latest", api_params
 
     if not records:
         logging.info(f"No records found for /{endpoint} session {session_val}. Skipping save.")
-        return None
+        return _result(endpoint, session_val, None, EMPTY)
 
     # ==========================================
     # SANITIZE & SAVE TO DISK AS PARQUET
@@ -250,7 +272,7 @@ def extract_and_save_endpoint(endpoint: str, target_session="latest", api_params
         pq.write_table(table, tmp_path, compression='snappy')
         os.replace(tmp_path, output_path)
         logging.info(f"Success! Saved {len(records)} records to {output_path}")
-        return output_path
+        return _result(endpoint, session_val, output_path, WRITTEN)
     except Exception as e:
         logging.error(f"Failed to save Parquet file for {endpoint}: {str(e)}")
         if os.path.exists(tmp_path):

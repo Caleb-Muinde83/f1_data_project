@@ -17,6 +17,9 @@ clean-targets:
 # Tunable analytics assumptions. Change them here, not inside the SQL.
 # ---------------------------------------------------------------------------
 vars:
+  # SESSION SCOPE (macros/scope.sql). Airflow passes the sessions a run changed: --vars '{session_keys: [9158]}'. Empty = no scope, which
+  # behaves as before (the telemetry tables then load only the sessions they do not hold yet). `telemetry_only_sessions` is the old name.
+  session_keys: []
   # Fuel burn lap-time effect (s per lap of fuel burned). ASSUMPTION: ~0.03-0.04 s/lap is a commonly
   # quoted figure; real values vary by circuit/era. Used only for fuel_corrected_lap_time_seconds.
   fuel_effect_seconds_per_lap: 0.035
@@ -66,7 +69,27 @@ models:
   dbt_f1_transformations:
     staging:
       +materialized: view
+      # The telemetry group = the scoped views plus every model that reads them (directly or through fct_telemetry). Airflow selects it
+      # per chunk of sessions (`--select tag:telemetry_group`) and builds everything else once (`--exclude tag:telemetry_group`).
+      # Nothing outside this group depends on it. Keep this list in sync with ci/check_scoped_views.py (it fails on a mismatch).
+      stg_car_data:
+        +tags: [telemetry_group]
+      stg_location:
+        +tags: [telemetry_group]
     intermediate:
       +materialized: table
     marts:
       +materialized: table
+      analytics:
+        fct_telemetry:
+          +tags: [telemetry_group]
+        fct_telemetry_distance_trace:
+          +tags: [telemetry_group]
+        fct_telemetry_lap_summary:
+          +tags: [telemetry_group]
+        fct_lap_time_delta_trace:
+          +tags: [telemetry_group]
+        dim_session_corners:
+          +tags: [telemetry_group]
+        fct_corner_performance:
+          +tags: [telemetry_group]

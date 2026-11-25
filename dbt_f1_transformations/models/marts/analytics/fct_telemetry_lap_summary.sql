@@ -1,10 +1,23 @@
-{# Per driver per lap telemetry KPIs: top/min speed, throttle/brake application, gear usage, DRS and braking zones. #}
+{# Per driver per lap telemetry KPIs: top/min speed, throttle/brake application, gear usage, DRS and braking zones.
+   INCREMENTAL by session (was a table that rescanned every telemetry row on each build): a scoped run replaces those sessions, an unscoped run
+   loads only sessions not yet here. #}
+{{ config(
+    materialized='incremental',
+    incremental_strategy=var('bq_incremental_strategy', 'insert_overwrite') if target.type == 'bigquery' else 'delete+insert',
+    unique_key=(['session_key', 'driver_number', 'lap_number'] if var('bq_incremental_strategy', 'insert_overwrite') == 'merge' else none) if target.type == 'bigquery' else 'session_key',
+    partition_by=({'field': 'session_key', 'data_type': 'int64',
+                   'range': {'start': var('bq_session_key_start'), 'end': var('bq_session_key_end'), 'interval': 1}}
+                  if target.type == 'bigquery' else none),
+    pre_hook="{{ scoped_pre_delete() }}"
+) }}
+
 WITH samples AS (
     SELECT
         *,
         LAG(brake) OVER (PARTITION BY session_key, driver_number, lap_number ORDER BY telemetry_timestamp) AS prev_brake
     FROM {{ ref('fct_telemetry') }}
     WHERE lap_number IS NOT NULL
+      AND {{ telemetry_load_filter('session_key') }}
 )
 SELECT
     session_key, meeting_key, driver_number, lap_number,

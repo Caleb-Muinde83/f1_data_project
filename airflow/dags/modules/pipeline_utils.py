@@ -8,9 +8,11 @@ from datetime import datetime, timezone
 import pyarrow.parquet as pq
 
 
-def build_manifest(files, raw_dir: str, run_id: str) -> str:
+def build_manifest(files, raw_dir: str, run_id: str, results=None) -> str:
     """Write raw_dir/_manifests/<run_id>.json listing every file with its row count and size.
-    dbt tests / reviewers can reconcile what was extracted in a run against what reached the warehouse."""
+    dbt tests / reviewers can reconcile what was extracted in a run against what reached the warehouse.
+    results (optional): the extractor results {endpoint, session_key, path, status}; their status
+    (written / skipped / empty) is recorded so a manifest shows what the run actually changed."""
     entries = []
     for f in files:
         try:
@@ -26,6 +28,12 @@ def build_manifest(files, raw_dir: str, run_id: str) -> str:
         "total_rows": sum(e["rows"] or 0 for e in entries),
         "files": sorted(entries, key=lambda e: e["file"]),
     }
+    if results is not None:
+        clean = [{"endpoint": r.get("endpoint"), "session_key": r.get("session_key"),
+                  "file": os.path.basename(r["path"]) if r.get("path") else None, "status": r.get("status")}
+                 for r in results if isinstance(r, dict)]
+        manifest["status_counts"] = {st: sum(1 for r in clean if r["status"] == st) for st in ("written", "skipped", "empty")}
+        manifest["results"] = sorted(clean, key=lambda r: (str(r["endpoint"]), str(r["session_key"])))
     out_dir = os.path.join(raw_dir, "_manifests")
     os.makedirs(out_dir, exist_ok=True)
     safe = "".join(c if c.isalnum() or c in "-_." else "_" for c in str(run_id))

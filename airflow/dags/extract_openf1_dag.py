@@ -1,9 +1,5 @@
-from collections.abc import Sequence
-import json
 import logging
 import os
-import shlex
-import subprocess
 from datetime import datetime, timedelta
 
 from airflow import DAG
@@ -12,9 +8,13 @@ from airflow.exceptions import AirflowFailException, AirflowSkipException
 from airflow.models.param import Param
 from airflow.operators.empty import EmptyOperator
 from airflow.utils.task_group import TaskGroup
+from airflow.utils.trigger_rule import TriggerRule
 
 from hooks.openf1_hook import OpenF1Hook
 from slack_alerts import send_slack_failure_alert
+from modules.dbt_scope import (
+    DEFAULT_CHUNK_SIZE, ScopeError, build_dbt_scope, flatten_results, plan_dbt_commands, radio_transcripts_exist,
+)
 
 # ==========================================
 # DBT LOCATIONS (inside the Airflow container; see docker-compose.yaml for the mounts)
@@ -71,6 +71,20 @@ with DAG(
         "run_dbt_build": Param(
             default=False, type="boolean",
             description="Run `dbt build` after extraction (needs dbt + the dbt project mounted in the container).",
+        ),
+        "dbt_scope": Param(
+            default="auto", type="string", enum=["auto", "full"],
+            description="auto: dbt rebuilds only the sessions whose files were written in this run. "
+                        "full: whole graph with no session scope (the telemetry tables still load only sessions they lack).",
+        ),
+        "dbt_full_refresh": Param(
+            default=False, type="boolean",
+            description="Deliberate `dbt build --full-refresh` of EVERY model, including the 200M+ row telemetry tables. "
+                        "Also needs allow_large_backfill.",
+        ),
+        "dbt_chunk_size": Param(
+            default=DEFAULT_CHUNK_SIZE, type="integer", minimum=1,
+            description="Multi-session runs build the telemetry group this many sessions at a time.",
         ),
         "transcribe_radio": Param(
             default=False, type="boolean",
@@ -143,8 +157,8 @@ with DAG(
     # ==========================================
     @task(pool='openf1_api_pool')
     def extract_mapped_data(endpoint: str, target_session: str, is_global: bool = False, **context):
-        from modules.universal_extractor import extract_and_save_endpoint
-        return extract_and_save_endpoint(
+        from modules.universal_extractor import extract_endpoint_result
+        return extract_endpoint_result(
             endpoint=endpoint,
             target_session=target_session,
             is_global=is_global,
@@ -204,23 +218,19 @@ with DAG(
     def verify_and_load(event_results, telemetry_results, results_out, **context):
         from modules.pipeline_utils import build_manifest
 
-        flat_results = []
-        for task_group_results in [event_results, telemetry_results, results_out]:
-            for item in task_group_results:
-                if isinstance(item, Sequence) and not isinstance(item, (str, bytes)):
-                    flat_results.extend(item)
-                else:
-                    flat_results.append(item)
-
-        saved_files = [r for r in flat_results if r is not None]
+        results = flatten_results(event_results, telemetry_results, results_out)
+        counts = {st: sum(1 for r in results if r.get("status") == st) for st in ("written", "skipped", "empty")}
+        # a skipped file is already on disk and still belongs in the manifest / GCS upload, as before
+        saved_files = [r["path"] for r in results if r.get("path") and r.get("status") in ("written", "skipped")]
 
         if not saved_files:
             logging.warning("Pipeline completed, but NO files were successfully extracted or saved.")
-            return {"files": [], "manifest_path": None}
+            return {"files": [], "manifest_path": None, "results": results}
 
-        manifest_path = build_manifest(saved_files, RAW_DIR, context["run_id"])
-        logging.info(f"{len(saved_files)} Parquet files extracted. Manifest written to {manifest_path}. Ready for dbt!")
-        return {"files": saved_files, "manifest_path": manifest_path}
+        manifest_path = build_manifest(saved_files, RAW_DIR, context["run_id"], results=results)
+        logging.info(f"{len(saved_files)} Parquet files ready ({counts['written']} written, {counts['skipped']} skipped, "
+                     f"{counts['empty']} empty). Manifest written to {manifest_path}. Ready for dbt!")
+        return {"files": saved_files, "manifest_path": manifest_path, "results": results}
 
     load_task = verify_and_load(event_results, telemetry_results, results_out)
 
@@ -238,24 +248,37 @@ with DAG(
         return upload_raw_files(load_result["files"], bucket=bucket)
 
     # ==========================================
-    # OPTIONAL: RUN DBT AFTER EXTRACTION
+    # OPTIONAL: RUN DBT AFTER EXTRACTION (scoped to what this run changed)
     # ==========================================
-    @task
-    def run_dbt_build(load_result, **context):
-        if not context["params"]["run_dbt_build"]:
-            raise AirflowSkipException("run_dbt_build is off for this run.")
-        if not load_result["files"]:
-            raise AirflowSkipException("Nothing was extracted, so there is nothing to transform.")
+    # Runs after transcription too (radio transcript files feed fct_radio_messages). The trigger rule lets it run when
+    # the mapped transcription tasks were SKIPPED (transcribe_radio=false); a failed transcription still blocks it.
+    @task(trigger_rule=TriggerRule.NONE_FAILED)
+    def run_dbt_build(load_result, selected_session_keys, **context):
+        from modules.dbt_runner import DbtRunError, run_dbt_plan
 
-        env = {**os.environ, "DBT_PROFILES_DIR": DBT_PROFILES_DIR}
-        cmd = f"dbt build --target {shlex.quote(DBT_TARGET)} --profiles-dir {shlex.quote(DBT_PROFILES_DIR)}"
-        logging.info(f"Running: {cmd} (cwd={DBT_PROJECT_DIR})")
-        result = subprocess.run(cmd, shell=True, capture_output=True, text=True, cwd=DBT_PROJECT_DIR, env=env)
-        logging.info(result.stdout[-6000:])
-        if result.returncode != 0:
-            logging.error(result.stderr[-3000:])
-            raise AirflowFailException(f"dbt build failed with exit code {result.returncode}. See the task log above.")
-        return "dbt build succeeded"
+        p = context["params"]
+        if not p["run_dbt_build"]:
+            raise AirflowSkipException("run_dbt_build is off for this run.")
+        try:
+            scope = build_dbt_scope(
+                load_result["results"], selected_session_keys,
+                dbt_scope=p["dbt_scope"], dbt_full_refresh=bool(p["dbt_full_refresh"]),
+                chunk_size=int(p["dbt_chunk_size"]), allow_large_backfill=bool(p["allow_large_backfill"]),
+                non_telemetry_changed=bool(p["transcribe_radio"]),   # new transcript files change fct_radio_messages
+            )
+            if scope["mode"] == "none":
+                raise AirflowSkipException(f"dbt skipped: {scope['reason']}.")
+            steps = plan_dbt_commands(
+                scope, target=DBT_TARGET, profiles_dir=DBT_PROFILES_DIR,
+                radio_transcripts=radio_transcripts_exist(RAW_DIR), chunk_size=int(p["dbt_chunk_size"]),
+                dbt_executable=os.environ.get("DBT_EXECUTABLE", "dbt"),
+            )
+            summary = run_dbt_plan(steps, cwd=DBT_PROJECT_DIR, profiles_dir=DBT_PROFILES_DIR, scope=scope)
+        except ScopeError as exc:
+            raise AirflowFailException(str(exc)) from exc
+        except DbtRunError as exc:
+            raise AirflowFailException(str(exc)) from exc
+        return summary
 
     # ==========================================
     # OPTIONAL: TRANSCRIBE TEAM RADIO (one session at a time: CPU heavy)
@@ -270,7 +293,7 @@ with DAG(
     radio_task = transcribe_team_radio.expand(target_session=all_sessions)
 
     upload_task = upload_raw_to_gcs(load_task)
-    dbt_task = run_dbt_build(load_task)
+    dbt_task = run_dbt_build(load_task, all_sessions)
 
     # ==========================================
     # EXPLICIT DEPENDENCY GRAPH
@@ -281,3 +304,4 @@ with DAG(
     [all_sessions, race_sessions, quali_race_sessions] >> results_group
     [event_group, telemetry_group, results_group] >> load_task
     results_group >> radio_task
+    radio_task >> dbt_task      # dbt waits for transcription (trigger rule tolerates the skipped mapped tasks)

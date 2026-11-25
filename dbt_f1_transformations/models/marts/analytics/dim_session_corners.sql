@@ -8,13 +8,26 @@
   between sessions (a chicane may be one corner in one session and two in another). Apexes within
   var corner_min_separation_bins of the lap start/end are not detected (their detection windows would be cut off). turn_direction uses the raw x/y
   plane convention and may be mirrored relative to the real circuit. Speed class uses the reference apex speed.
+  INCREMENTAL by session: a scoped run replaces those sessions' corners, an unscoped run adds only sessions not yet here. Corners are
+  derived from the session's fastest lap, which is rebuilt on every run, so re-run a session with session_keys after its laps change.
 #}
+{{ config(
+    materialized='incremental',
+    incremental_strategy=var('bq_incremental_strategy', 'insert_overwrite') if target.type == 'bigquery' else 'delete+insert',
+    unique_key=(['session_key', 'corner_number'] if var('bq_incremental_strategy', 'insert_overwrite') == 'merge' else none) if target.type == 'bigquery' else 'session_key',
+    partition_by=({'field': 'session_key', 'data_type': 'int64',
+                   'range': {'start': var('bq_session_key_start'), 'end': var('bq_session_key_end'), 'interval': 1}}
+                  if target.type == 'bigquery' else none),
+    pre_hook="{{ scoped_pre_delete() }}"
+) }}
+
 WITH ref AS (
     SELECT session_key, driver_number, lap_number
     FROM (
         SELECT t.session_key, t.driver_number, t.lap_number,
                ROW_NUMBER() OVER (PARTITION BY t.session_key ORDER BY f.fastest_lap_time_seconds) AS rn
-        FROM (SELECT DISTINCT session_key, driver_number, lap_number FROM {{ ref('fct_telemetry_distance_trace') }}) t
+        FROM (SELECT DISTINCT session_key, driver_number, lap_number FROM {{ ref('fct_telemetry_distance_trace') }}
+              WHERE {{ telemetry_load_filter('session_key') }}) t
         JOIN {{ ref('fct_fastest_laps') }} f
             ON t.session_key = f.session_key AND t.driver_number = f.driver_number AND t.lap_number = f.lap_number
     ) ranked

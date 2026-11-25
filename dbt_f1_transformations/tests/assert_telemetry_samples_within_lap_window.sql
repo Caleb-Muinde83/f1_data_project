@@ -4,6 +4,7 @@ FROM {{ ref('fct_telemetry') }} t
 JOIN {{ ref('stg_laps') }} l
   ON t.session_key = l.session_key AND t.driver_number = l.driver_number AND t.lap_number = l.lap_number
 WHERE l.lap_duration IS NOT NULL
+  AND {{ in_scope('t.session_key') }}
   AND {{ f1_epoch_ms('t.telemetry_timestamp') }} - {{ f1_epoch_ms('l.date_start') }}
         > 1000 * (l.lap_duration + {{ var('telemetry_lap_tolerance_seconds', 2) }} + 1)
 GROUP BY 1, 2, 3

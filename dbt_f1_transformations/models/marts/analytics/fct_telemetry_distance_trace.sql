@@ -5,7 +5,7 @@
   session's typical lap length (the median of complete-lap totals). Incomplete laps (cut-off in/out laps, red-flagged
   laps) keep their raw distance and are marked is_complete_lap = FALSE; do not compare them point by point.
   Laps through the pit lane follow a different path but are still rescaled; filter on is_representative_lap upstream.
-  Incremental by session, like fct_telemetry.
+  Incremental by session, like fct_telemetry: a scoped run (var session_keys) replaces those sessions, an unscoped run loads only missing ones.
 
   Unavailable readings are masked, not dropped (the distance axis still needs every sample): a throttle above 100 means "no data" (the value 104
   appears in the raw feed), and a run of var stale_telemetry_min_samples or more consecutive samples with the same non-zero speed and gear is a
@@ -14,11 +14,12 @@
 #}
 {{ config(
     materialized='incremental',
-    incremental_strategy=var('bq_incremental_strategy', 'insert_overwrite') if target.type == 'bigquery' else 'append',
-    unique_key=['session_key', 'driver_number', 'lap_number', 'distance_bin'] if (target.type == 'bigquery' and var('bq_incremental_strategy', 'insert_overwrite') == 'merge') else none,
+    incremental_strategy=var('bq_incremental_strategy', 'insert_overwrite') if target.type == 'bigquery' else 'delete+insert',
+    unique_key=(['session_key', 'driver_number', 'lap_number', 'distance_bin'] if var('bq_incremental_strategy', 'insert_overwrite') == 'merge' else none) if target.type == 'bigquery' else 'session_key',
     partition_by=({'field': 'session_key', 'data_type': 'int64',
                    'range': {'start': var('bq_session_key_start'), 'end': var('bq_session_key_end'), 'interval': 1}}
-                  if target.type == 'bigquery' else none)
+                  if target.type == 'bigquery' else none),
+    pre_hook="{{ scoped_pre_delete() }}"
 ) }}
 
 WITH base AS (
@@ -27,9 +28,7 @@ WITH base AS (
     LEFT JOIN {{ ref('stg_laps') }} l
         ON t.session_key = l.session_key AND t.driver_number = l.driver_number AND t.lap_number = l.lap_number
     WHERE t.lap_number IS NOT NULL
-    {% if is_incremental() %}
-      AND t.session_key NOT IN (SELECT DISTINCT session_key FROM {{ this }})
-    {% endif %}
+      AND {{ telemetry_load_filter('t.session_key') }}
 ),
 changes AS (
     SELECT

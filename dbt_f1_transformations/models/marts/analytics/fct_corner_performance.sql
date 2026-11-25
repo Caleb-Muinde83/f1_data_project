@@ -1,4 +1,15 @@
-{# Per driver per lap per DETECTED corner (see dim_session_corners for what "corner" means here). #}
+{# Per driver per lap per DETECTED corner (see dim_session_corners for what "corner" means here).
+   INCREMENTAL by session: a scoped run replaces those sessions, an unscoped run loads only sessions not yet here. #}
+{{ config(
+    materialized='incremental',
+    incremental_strategy=var('bq_incremental_strategy', 'insert_overwrite') if target.type == 'bigquery' else 'delete+insert',
+    unique_key=(['session_key', 'driver_number', 'lap_number', 'corner_number'] if var('bq_incremental_strategy', 'insert_overwrite') == 'merge' else none) if target.type == 'bigquery' else 'session_key',
+    partition_by=({'field': 'session_key', 'data_type': 'int64',
+                   'range': {'start': var('bq_session_key_start'), 'end': var('bq_session_key_end'), 'interval': 1}}
+                  if target.type == 'bigquery' else none),
+    pre_hook="{{ scoped_pre_delete() }}"
+) }}
+
 WITH j AS (
     SELECT
         t.session_key, t.driver_number, t.lap_number, c.corner_number,
@@ -9,6 +20,7 @@ WITH j AS (
     JOIN {{ ref('dim_session_corners') }} c
         ON t.session_key = c.session_key
         AND t.distance_bin BETWEEN c.entry_bin - {{ (var('corner_brake_lookback_m') / var('distance_bin_metres')) | int }} AND c.exit_bin + 2
+    WHERE {{ telemetry_load_filter('t.session_key') }}
 ),
 agg AS (
     SELECT

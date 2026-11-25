@@ -2,3 +2,4 @@
 SELECT session_key, driver_number, lap_number, distance_bin, avg_throttle
 FROM {{ ref('fct_telemetry_distance_trace') }}
 WHERE avg_throttle > 100
+  AND {{ in_scope('session_key') }}

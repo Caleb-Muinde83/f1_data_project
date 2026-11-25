@@ -3,29 +3,27 @@
   * ASOF joins: "latest location reading at or before this telemetry sample" (the two feeds are not
     timestamp-aligned, so an equality join silently drops almost every row).
   * location_age_ms exposes how stale the matched position is; positions older than 2 s are set to NULL.
-  * INCREMENTAL by session: a session already present is skipped. To re-load a session whose raw files were
-    re-extracted:  dbt run-operation delete_sessions_from_incrementals --args '{sessions: [9158]}'  then dbt run.
+  * INCREMENTAL by session. Scoped run (--vars '{session_keys: [9158]}'): those sessions are replaced, never appended. Unscoped run: a
+    session already present is skipped. Manual re-load without a scope:
+    dbt run-operation delete_sessions_from_incrementals --args '{sessions: [9158]}'  then dbt run.
 #}
 {{ config(
     materialized='incremental',
-    incremental_strategy=var('bq_incremental_strategy', 'insert_overwrite') if target.type == 'bigquery' else 'append',
-    unique_key=['session_key', 'driver_number', 'telemetry_timestamp'] if (target.type == 'bigquery' and var('bq_incremental_strategy', 'insert_overwrite') == 'merge') else none,
+    incremental_strategy=var('bq_incremental_strategy', 'insert_overwrite') if target.type == 'bigquery' else 'delete+insert',
+    unique_key=(['session_key', 'driver_number', 'telemetry_timestamp'] if var('bq_incremental_strategy', 'insert_overwrite') == 'merge' else none) if target.type == 'bigquery' else 'session_key',
     partition_by=({'field': 'session_key', 'data_type': 'int64',
                    'range': {'start': var('bq_session_key_start'), 'end': var('bq_session_key_end'), 'interval': 1}}
-                  if target.type == 'bigquery' else none)
+                  if target.type == 'bigquery' else none),
+    pre_hook="{{ scoped_pre_delete() }}"
 ) }}
 
-{# Optional: --vars '{telemetry_only_sessions: [9158]}' builds telemetry for just those sessions. The downstream telemetry marts
-   (lap summary, distance trace, corners, delta trace) only see what is in this table, so they follow automatically. #}
+{# SESSION SCOPE (macros/scope.sql). With --vars '{session_keys: [9158]}' those sessions are REPLACED: stg_car_data / stg_location expose only
+   them, the pre_hook deletes them from this table first (so a session whose upstream rows vanished is cleared too), and delete+insert on
+   session_key swaps in the fresh rows. With no scope, only sessions this table does not hold yet are loaded. The downstream telemetry marts
+   read this table and are scoped the same way. #}
 WITH car_data AS (
     SELECT * FROM {{ ref('stg_car_data') }}
-    WHERE 1 = 1
-    {% if var('telemetry_only_sessions', []) | length > 0 %}
-      AND session_key IN ({{ var('telemetry_only_sessions') | join(', ') }})
-    {% endif %}
-    {% if is_incremental() %}
-      AND session_key NOT IN (SELECT DISTINCT session_key FROM {{ this }})
-    {% endif %}
+    WHERE {{ telemetry_load_filter('session_key') }}
 )
 , with_location AS (
     {{ f1_asof_join(left='car_data', right=ref('stg_location'), on=['session_key', 'driver_number'], left_ts='telemetry_timestamp', right_ts='location_timestamp',

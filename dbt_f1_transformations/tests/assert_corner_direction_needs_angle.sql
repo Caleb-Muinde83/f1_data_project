@@ -3,3 +3,4 @@
 SELECT session_key, corner_number, turn_angle_deg, turn_direction
 FROM {{ ref('dim_session_corners') }}
 WHERE turn_direction IS NOT NULL AND turn_angle_deg IS NULL
+  AND {{ in_scope('session_key') }}

@@ -152,26 +152,27 @@ models:
 
   - name: fct_telemetry
     description: >
-      Car telemetry with ASOF-joined position and lap number. Incremental by session.
+      Car telemetry with ASOF-joined position and lap number. Incremental by session; a scoped run (var session_keys) replaces those sessions.
       Uniqueness is deliberately not tested here (tens of millions of rows); see assert_telemetry_speed_plausible.
+      The not_null tests are scope-aware (not_null_in_scope): a scoped build scans only the sessions it replaced.
     columns:
       - name: session_key
-        data_tests: [not_null]
+        data_tests: [not_null_in_scope]
       - name: telemetry_timestamp
-        data_tests: [not_null]
+        data_tests: [not_null_in_scope]
 
   - name: fct_telemetry_lap_summary
-    description: "Per-lap telemetry KPIs (top speed, throttle/brake application, braking zones, DRS, gear usage)."
+    description: "Per-lap telemetry KPIs (top speed, throttle/brake application, braking zones, DRS, gear usage). Incremental by session."
     data_tests:
-      - unique_combination_of_columns: {arguments: {combination_of_columns: [session_key, driver_number, lap_number]}}
+      - unique_combination_of_columns: {arguments: {combination_of_columns: [session_key, driver_number, lap_number], scope_column: session_key}}
 
   - name: fct_telemetry_distance_trace
-    description: "Telemetry on a distance axis (var distance_bin_metres) for lap-to-lap comparison."
+    description: "Telemetry on a distance axis (var distance_bin_metres) for lap-to-lap comparison. Incremental by session."
     data_tests:
-      - unique_combination_of_columns: {arguments: {combination_of_columns: [session_key, driver_number, lap_number, distance_bin]}}
+      - unique_combination_of_columns: {arguments: {combination_of_columns: [session_key, driver_number, lap_number, distance_bin], scope_column: session_key}}
 
   - name: fct_lap_time_delta_trace
-    description: "Each driver's best lap vs the session fastest lap along the lap distance."
+    description: "Each driver's best lap vs the session fastest lap along the lap distance. Incremental by session."
 
   - name: fct_championship_standings
     description: "Driver standings snapshots from the (beta) OpenF1 championship endpoint."
@@ -228,18 +229,18 @@ models:
 
   - name: dim_session_corners
     description: >
-      DERIVED corners (detected from reference-lap telemetry, not official turn numbers). One row per detected apex per session.
+      DERIVED corners (detected from reference-lap telemetry, not official turn numbers). One row per detected apex per session. Incremental by session.
     data_tests:
-      - unique_combination_of_columns: {arguments: {combination_of_columns: [session_key, corner_number]}}
+      - unique_combination_of_columns: {arguments: {combination_of_columns: [session_key, corner_number], scope_column: session_key}}
     columns:
       - name: speed_class
         data_tests:
           - accepted_values: {arguments: {values: ['SLOW', 'MEDIUM', 'FAST']}}
 
   - name: fct_corner_performance
-    description: "Entry/apex/exit speed, braking distance and throttle pick-up per driver per lap per detected corner."
+    description: "Entry/apex/exit speed, braking distance and throttle pick-up per driver per lap per detected corner. Incremental by session."
     data_tests:
-      - unique_combination_of_columns: {arguments: {combination_of_columns: [session_key, driver_number, lap_number, corner_number]}}
+      - unique_combination_of_columns: {arguments: {combination_of_columns: [session_key, driver_number, lap_number, corner_number], scope_column: session_key}}
 
   - name: fct_radio_messages
     description: >

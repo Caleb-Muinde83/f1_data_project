@@ -4,4 +4,5 @@
 SELECT session_key, driver_number, lap_number, distance_bin, elapsed_seconds, avg_speed_kph, avg_throttle
 FROM {{ ref('fct_telemetry_distance_trace') }}
 WHERE driver_number = 44 AND lap_number = 5 AND elapsed_seconds < 2.0
+  AND {{ in_scope('session_key') }}
   AND (avg_speed_kph IS NOT NULL OR avg_throttle IS NOT NULL)

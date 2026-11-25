@@ -74,3 +74,28 @@ def test_429_retries_then_succeeds(fake_hook):
         return [{"session_key": 3, "x": 1}]
     fake_hook.script["/weather"] = flaky
     assert ue.extract_and_save_endpoint("weather", target_session=3) is not None and state["n"] == 3
+
+
+def test_result_statuses_written_skipped_and_empty(fake_hook, tmp_path):
+    ue = load()
+    fake_hook.script["/laps"] = lambda p: [{"session_key": 1, "lap_number": 1}]
+    first = ue.extract_endpoint_result("laps", target_session=1)
+    assert first["status"] == "written" and first["session_key"] == 1 and first["endpoint"] == "laps"
+    assert first["path"].endswith("laps_1_extracted.parquet")
+    again = ue.extract_endpoint_result("laps", target_session=1, skip_existing=True)
+    assert again["status"] == "skipped" and again["path"] == first["path"]
+
+    def boom(p): raise RuntimeError("404 Client Error")
+    fake_hook.script["/pit"] = boom
+    gone = ue.extract_endpoint_result("pit", target_session=1)
+    assert gone == {"endpoint": "pit", "session_key": 1, "path": None, "status": "empty"}
+
+    fake_hook.script["/weather"] = lambda p: []
+    assert ue.extract_endpoint_result("weather", target_session=1)["status"] == "empty"
+
+
+def test_global_endpoint_result_has_a_global_session_key(fake_hook):
+    ue = load()
+    fake_hook.script["/meetings"] = lambda p: [{"meeting_key": 1}]
+    res = ue.extract_endpoint_result("meetings", target_session="global", is_global=True)
+    assert res["status"] == "written" and res["session_key"] == "global"

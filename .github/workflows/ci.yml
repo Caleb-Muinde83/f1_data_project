@@ -12,8 +12,10 @@ jobs:
         with:
           python-version: "3.11"
       - run: pip install dbt-duckdb pyarrow pytest numpy duckdb streamlit plotly
-      - name: Python unit tests (extractor, manifest, GCS loader, radio, BigQuery loader)
+      - name: Python unit tests (extractor, manifest, dbt scope and runner, GCS loader, radio, BigQuery loader)
         run: python -m pytest -q airflow/tests
+      - name: Truncation-guard unit tests
+        run: python -m pytest -q dbt_f1_transformations/ci/tests
       - name: Strategy simulator tests
         run: python -m pytest -q analytics/tests
       - name: Compile DAG and plugin code
@@ -31,6 +33,15 @@ jobs:
         run: |
           dbt seed --profiles-dir . --target ci
           dbt build --profiles-dir . --target ci --vars '{enable_radio_transcripts: true, min_stint_laps_for_degradation: 3}'
+      - name: Truncation guard (no table model may read scoped data; the telemetry_group tag matches the graph)
+        working-directory: dbt_f1_transformations
+        run: python ci/check_scoped_views.py target/manifest.json
+      - name: Scoped-build equivalence (replace, idempotency, zero rows, vanished upstream) on copies of the built warehouse
+        working-directory: dbt_f1_transformations
+        env:
+          F1_RAW_DATA_PATH: ${{ runner.temp }}/f1_raw
+          F1_DUCKDB_PATH: ${{ runner.temp }}/f1_ci.duckdb
+        run: python ci/scoped_equivalence_check.py --full-db "$F1_DUCKDB_PATH" --raw-dir "$F1_RAW_DATA_PATH" --session 9002 --target ci
       - name: Dashboard tests (every page renders against the built warehouse)
         env:
           F1_DUCKDB_PATH: ${{ runner.temp }}/f1_ci.duckdb

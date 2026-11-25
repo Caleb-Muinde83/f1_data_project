@@ -1,6 +1,17 @@
 {# Each driver's best lap vs the session's fastest lap, point by point along the lap (the engineer's "delta trace").
    time_delta_seconds > 0 means the driver is behind the reference at that distance. Only drivers with extracted
-   telemetry appear (telemetry is the heaviest endpoint and may be extracted for fewer drivers/sessions). #}
+   telemetry appear (telemetry is the heaviest endpoint and may be extracted for fewer drivers/sessions).
+   INCREMENTAL by session: a scoped run replaces those sessions, an unscoped run loads only sessions not yet here. #}
+{{ config(
+    materialized='incremental',
+    incremental_strategy=var('bq_incremental_strategy', 'insert_overwrite') if target.type == 'bigquery' else 'delete+insert',
+    unique_key=(['session_key', 'driver_number', 'lap_number', 'distance_bin'] if var('bq_incremental_strategy', 'insert_overwrite') == 'merge' else none) if target.type == 'bigquery' else 'session_key',
+    partition_by=({'field': 'session_key', 'data_type': 'int64',
+                   'range': {'start': var('bq_session_key_start'), 'end': var('bq_session_key_end'), 'interval': 1}}
+                  if target.type == 'bigquery' else none),
+    pre_hook="{{ scoped_pre_delete() }}"
+) }}
+
 WITH best AS (
     SELECT session_key, driver_number, lap_number, is_overall_fastest_lap FROM {{ ref('fct_fastest_laps') }}
 ),
@@ -18,3 +29,4 @@ JOIN reference r ON d.session_key = r.session_key
 JOIN {{ ref('fct_telemetry_distance_trace') }} ref
     ON ref.session_key = r.session_key AND ref.driver_number = r.ref_driver_number
     AND ref.lap_number = r.ref_lap_number AND ref.distance_bin = d.distance_bin
+WHERE {{ telemetry_load_filter('d.session_key') }}

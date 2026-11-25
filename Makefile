@@ -1,4 +1,4 @@
-.PHONY: fixtures unit ci-test dbt-build dbt-docs export airflow-up airflow-down dashboard strategy semantic-validate bq-emulator-test
+.PHONY: fixtures unit scoped-check ci-test dbt-build dbt-docs export airflow-up airflow-down dashboard strategy semantic-validate bq-emulator-test
 SHELL := /bin/bash
 DBT := cd dbt_f1_transformations && dbt
 CI_VARS := {enable_radio_transcripts: true, min_stint_laps_for_degradation: 3}
@@ -9,10 +9,16 @@ fixtures:            ## synthetic OpenF1-shaped Parquet in .ci_raw/ (no API call
 unit:                ## Python unit tests: extractor/loader/GCS/radio (airflow), strategy simulator (analytics)
 	python -m pytest -q airflow/tests
 	python -m pytest -q analytics/tests
+	python -m pytest -q dbt_f1_transformations/ci/tests
 
-ci-test: fixtures unit   ## everything CI runs: unit tests, full dbt build + tests on synthetic data, dashboard tests
+scoped-check:        ## after ci-test's dbt build: truncation guard + scoped-build equivalence on COPIES of the built warehouse
+	cd dbt_f1_transformations && python ci/check_scoped_views.py target/manifest.json
+	cd dbt_f1_transformations && F1_RAW_DATA_PATH=$(CURDIR)/.ci_raw/raw F1_DUCKDB_PATH=$(CURDIR)/.ci_raw/ci.duckdb python ci/scoped_equivalence_check.py --full-db $(CURDIR)/.ci_raw/ci.duckdb --raw-dir $(CURDIR)/.ci_raw/raw --session 9002 --target ci
+
+ci-test: fixtures unit   ## everything CI runs: unit tests, full dbt build + tests on synthetic data, scoped-build checks, dashboard tests
 	cd dbt_f1_transformations && F1_RAW_DATA_PATH=$(CURDIR)/.ci_raw/raw F1_DUCKDB_PATH=$(CURDIR)/.ci_raw/ci.duckdb dbt seed --profiles-dir . --target ci
 	cd dbt_f1_transformations && F1_RAW_DATA_PATH=$(CURDIR)/.ci_raw/raw F1_DUCKDB_PATH=$(CURDIR)/.ci_raw/ci.duckdb dbt build --profiles-dir . --target ci --vars '$(CI_VARS)'
+	$(MAKE) scoped-check
 	F1_DUCKDB_PATH=$(CURDIR)/.ci_raw/ci.duckdb python -m pytest -q dashboards/tests
 
 dbt-build:           ## build against YOUR real data (target dev; see profiles.yml)

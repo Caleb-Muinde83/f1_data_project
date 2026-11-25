@@ -123,11 +123,13 @@ cd dbt_f1_transformations
 dbt build --profiles-dir . --target dev
 ```
 
-Telemetry is large. To build it for chosen sessions only:
+Telemetry is large. To build it for chosen sessions only (those sessions are replaced, never appended):
 
 ```bash
-dbt build --select fct_telemetry+ --vars '{telemetry_only_sessions: [9158]}'
+dbt build --vars '{session_keys: [9158]}'
 ```
+
+Airflow does this for you: with `run_dbt_build` on, each run passes the sessions it actually wrote. See `docs/SESSION_SCOPED_BUILDS.md`.
 
 ## Optional: Google Cloud setup
 

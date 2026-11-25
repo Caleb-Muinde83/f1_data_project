@@ -1,3 +1,5 @@
+{# SCOPED VIEW: with var session_keys set it exposes only those sessions (see macros/scope.sql); unset, it exposes everything.
+   Only this view and stg_location are scoped. A `table` model must never read them (ci/check_scoped_views.py). #}
 WITH raw_location AS (
     SELECT * FROM {{ source('openf1_raw', 'location') }}
 ),
@@ -15,3 +17,4 @@ renamed_and_casted AS (
     WHERE driver_number IS NOT NULL
 )
 SELECT * FROM renamed_and_casted
+WHERE {{ in_scope('session_key') }}
