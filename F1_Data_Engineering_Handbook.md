@@ -6,7 +6,7 @@
 
 This book turns the raw build logs of a real project into a **curriculum**. You will start with an empty folder and finish with a working **Formula 1 analytics warehouse**: raw data pulled from the **OpenF1 API** by **Apache Airflow**, stored as **Parquet**, cleaned and modelled by **dbt** inside **DuckDB**, explored with SQL tools, visualised in **Power BI**, and prepared for the cloud with **OpenTofu** on **Google Cloud**.
 
-**This is the second edition of the handbook.** The chapters and the order are unchanged: new material was added *inside* the chapter where it belongs, and a few code blocks were replaced with the current version from the repository. Section **What Changed in This Edition** (just below the chapter map) lists exactly what moved, so you can find the new parts without rereading everything.
+**This is the third edition of the handbook.** The chapters and the order are unchanged: new material was added *inside* the chapter where it belongs, and a few code blocks were replaced with the current version from the repository. Section **What Changed in This Edition** (just below the chapter map) lists what the second edition moved, and the table **What Changed in the Third Edition** under it lists the third edition's changes, which are confined to Chapters 1, 3, 5, 6, 7, 8, 11 and 12, one renamed variable in Chapter 10, and the appendices. The third edition is about **session-scoped incremental builds**: each extraction run now builds only its own sessions.
 
 Every chapter follows the same rhythm: **why** the technology exists, **what** you will build, **how** to build it step by step, and a **Learner Pitfalls & Troubleshooting** section made of errors that were actually hit while building this project, each with its root cause and fix.
 
@@ -40,8 +40,8 @@ This book separates **what the build logs prove** from **what is only scaffolded
 | Project skeleton, Git workflow | **[VERIFIED]** |
 | Airflow in Docker, hook, pool, universal extractor | **[VERIFIED]** |
 | Extraction hardening (chunking, backoff, sanitiser, Parquet) | **[VERIFIED]** |
-| Extraction additions: run metadata, atomic writes, skip-existing, fan-out guard, manifest, failure alerts | **[VERIFIED ON SYNTHETIC DATA]** (unit tests; DAG parsed with real Airflow 2.10.5; never run in Docker) |
-| dbt + DuckDB: sources, staging, marts, tests | **[VERIFIED]** on real data in the build logs; the current 135-node project (56 models, 1 seed, 78 tests) is **[VERIFIED ON SYNTHETIC DATA]**: `make ci-test` passes on DuckDB 1.5.6 and 2.0.0 |
+| Extraction additions: run metadata, atomic writes, skip-existing, fan-out guard, manifest, failure alerts | **[VERIFIED ON SYNTHETIC DATA]** (unit tests; DAG parsed with real Airflow 2.10.5). The third edition's structured results, manifest statuses and scoped dbt step were then run in Docker on real data: see Chapter 8 |
+| dbt + DuckDB: sources, staging, marts, tests | **[VERIFIED]** on real data in the build logs; the current 143-node project (56 models, 1 seed, 86 tests) is **[VERIFIED ON SYNTHETIC DATA]**: `make ci-test` passed on DuckDB 1.5.6 and 2.0.0 for the second edition, and the third edition's full fixtures build passed on DuckDB 2.0.0 (142 pass, 1 warning) |
 | Pit strategy: compound pace model, pit loss, undercut/overcut | **[VERIFIED ON SYNTHETIC DATA]** (also built on real data; see Chapter 6 pitfalls) |
 | Safety-car risk model and the Monte Carlo strategy simulator | **[VERIFIED ON SYNTHETIC DATA]** (the simulator is unit-tested against hand-calculated totals; **not validated against real races**) |
 | Telemetry: ASOF joins, distance axis, derived corners and apex speeds | **[VERIFIED ON SYNTHETIC DATA]** (a full real-data build of `fct_telemetry` took 1 h 25 min: see Chapter 7) |
@@ -50,7 +50,8 @@ This book separates **what the build logs prove** from **what is only scaffolded
 | Harlequin, DBeaver, Power BI over ODBC (16 mart tables in the first-edition build) | **[VERIFIED]** |
 | Streamlit dashboards | **[VERIFIED ON SYNTHETIC DATA]** (104 headless tests; `docs/CHANGES.md` records further fixes made after running the pages on real data) |
 | MetricFlow semantic layer (7 semantic models, 22 metrics) | **[VERIFIED ON SYNTHETIC DATA]** (config validation plus 7 metrics cross-checked against hand-written SQL) |
-| dbt triggered from inside Airflow (`run_dbt_build`) | **[CODE FINAL, RUN NOT CONFIRMED]** |
+| dbt triggered from inside Airflow (`run_dbt_build`), scoped to the sessions a run wrote | **[VERIFIED]** on real data in Docker (one `latest` run; the multi-chunk plan, `dbt_scope=full` and the full-refresh guard are unit-tested only) |
+| Session-scoped incremental telemetry (replace-by-session, scope-aware tests, truncation guard, equivalence check) | **[VERIFIED]**: equivalence check on the generated dataset, a damage-and-restore test on a copy of the real warehouse, and one live Docker run that left every other session's row counts unchanged. BigQuery: compile and full build only |
 | OpenTofu: `tofu init` and `tofu plan` for a GCS bucket | **[VERIFIED]** |
 | OpenTofu: BigQuery datasets | **[CODE FINAL, RUN NOT CONFIRMED]** (no `tofu` binary was available to validate it) |
 | BigQuery: portable SQL, raw loader, `dbt-bigquery` target | **[VERIFIED ON SYNTHETIC DATA]** on the BigQuery **emulator**: all 56 tables identical to DuckDB, as of that run. The repository's `docs/CHANGES.md` records later model changes for which `make bq-emulator-test` has not been re-run. Real BigQuery, and incremental re-runs, are untested |
@@ -72,6 +73,7 @@ This book separates **what the build logs prove** from **what is only scaffolded
           v
   Apache Airflow (Docker)  ----  Hook -> Universal Extractor -> Dynamic Task Mapping -> run manifest
           |                       \--(opt-in)--> faster-whisper: team radio audio -> transcripts
+          |                       \--(opt-in)--> dbt build scoped to the sessions this run wrote (session_keys)
           |  Parquet files (snappy compressed)
           v
   Local data lake   airflow/data/raw/<endpoint>_<session>_extracted.parquet
@@ -116,15 +118,15 @@ This book separates **what the build logs prove** from **what is only scaffolded
 
 1. Project Set Up and Initialization
 2. Local Orchestration and API Extraction (Airflow and Docker) *(now with secrets in `.env` and dbt mounted)*
-3. Hardening the Extraction Pipeline *(now with run metadata, atomic writes, a fan-out guard and a manifest)*
+3. Hardening the Extraction Pipeline *(now with run metadata, atomic writes, a fan-out guard, a manifest and structured `written`/`skipped`/`empty` results)*
 4. Data Modelling Concepts: ELT, Layers, Joins and the Star Schema
 5. Data Transformation I: dbt, DuckDB and the Staging Layer *(now with environment-driven profiles and a DuckDB 1.5 pitfall)*
 6. Data Transformation II: Building the Analytical Marts *(now with the lap-context layer, pit strategy, safety-car risk and the strategy simulator)*
-7. Taming High-Volume Telemetry *(now with the distance axis and derived corners)*
-8. Closing the Loop: Running dbt From Airflow *(now implemented)*
+7. Taming High-Volume Telemetry *(now with the distance axis, derived corners and session-scoped, replace-by-session builds)*
+8. Closing the Loop: Running dbt From Airflow *(now implemented, and scoped to the sessions each run wrote)*
 9. Serving the Data: SQL Tools, Power BI, Dashboards and the Semantic Layer
 10. Infrastructure as Code (OpenTofu and GCP) *(now with the BigQuery port)*
-11. Professional Workflow: Git, CI/CD and Testing Everything
+11. Professional Workflow: Git, CI/CD and Testing Everything *(now with the truncation guard and the scoped-build equivalence check)*
 12. Operations and Troubleshooting Playbook
 
 Appendices: **A** Final directory tree, **B** the 18 OpenF1 endpoints, **C** glossary.
@@ -146,6 +148,23 @@ If you already worked through the first edition, this is where to look. Nothing 
 | 10 | OpenTofu gains BigQuery datasets; **the planned cloud steps are replaced by the BigQuery port** (Tasks 4 to 7) |
 | 11 | The CI/CD sketch is replaced by the real workflows; new Task 3 runs every test locally |
 | 12 | Start-up, run order and error index updated |
+| Appendices | Directory tree updated; glossary gains the new terms |
+
+## **What Changed in the Third Edition**
+
+The third edition adds one idea, **session-scoped incremental builds**, and brings the code blocks of the chapters it touches up to the current repository. Chapters 2, 4 and 9 are unchanged.
+
+| Chapter | What was added or replaced |
+|---|---|
+| 1 | The skeleton script gains `dbt_scope.py`, `dbt_runner.py`, `macros/scope.sql`, and the new CI scripts |
+| 3 | Extractor, DAG and `pipeline_utils.py` replaced: structured `written` / `skipped` / `empty` results, statuses in the manifest, three new dbt parameters, the new order of tasks. New pitfall: Airflow hands over lazy sequences, not lists |
+| 5 | `dbt_project.yml` replaced (the `session_keys` variable, the `telemetry_group` tags, and two telemetry variables the book had never listed); `stg_car_data` and `stg_location` become the only scoped views |
+| 6 | `schema.yml` replaced; scope-aware generic and singular tests; the table of singular tests corrected (32 tests, including three that were never described) |
+| 7 | `fct_telemetry`, the distance trace, the lap summary, the delta trace and both corner models replaced with the current files; the scope macros; replace-by-session; the generalised delete macro; masking of unavailable and frozen readings and the nearest-bin corner geometry, which the repository had but the book did not describe; new pitfalls |
+| 8 | `run_dbt_build` rewritten around two new Airflow-free modules (`dbt_scope.py`, `dbt_runner.py`); the behaviour table, parameters and expected log; status upgraded to verified; new pitfalls |
+| 10 | One renamed variable (`telemetry_only_sessions` is now `session_keys`) |
+| 11 | `ci.yml` replaced; new Task 4: the truncation guard and the equivalence check; new pitfalls |
+| 12 | Run order and error index updated |
 | Appendices | Directory tree updated; glossary gains the new terms |
 
 ---
@@ -256,6 +275,7 @@ touch airflow/plugins/hooks/openf1_hook.py airflow/plugins/slack_alerts.py
 touch airflow/dags/.airflowignore airflow/dags/extract_openf1_dag.py
 touch airflow/dags/dbt_cosmos_dag.py                      # Chapter 8 (optional)
 touch airflow/dags/modules/universal_extractor.py
+touch airflow/dags/modules/dbt_scope.py airflow/dags/modules/dbt_runner.py   # Chapter 8: scope builder and dbt runner
 touch airflow/dags/modules/event_extractor.py
 touch airflow/dags/modules/gcs_loader.py                  # Chapter 10
 
@@ -282,6 +302,8 @@ mkdir -p dashboards/f1_dash dashboards/tests              # Chapter 9 (f1_dash g
 mkdir -p airflow/tests                                    # Chapter 3
 mkdir -p dbt_f1_transformations/seeds dbt_f1_transformations/tests/generic
 mkdir -p dbt_f1_transformations/ci dbt_f1_transformations/models/semantic
+mkdir -p dbt_f1_transformations/ci/tests                  # Chapter 11: tests for the CI helpers
+touch dbt_f1_transformations/macros/scope.sql             # Chapter 7: the session scope
 mkdir -p docs
 touch airflow/.env.example
 
@@ -982,10 +1004,11 @@ The v1 pipeline from Chapter 2 works, but only for **one hard-coded session** an
 * **Exponential backoff:** after a rate-limit error, wait a little, then longer on each retry (30 s, then 60 s) instead of hammering the server.
 * **Idempotency:** running the same job twice gives the same result. Files are named by endpoint **and** session key, so re-running overwrites rather than duplicates.
 * **Fan-out guard (now configurable):** with `all`, the full session history would create thousands of mapped tasks. Three parameters control it: `min_session_key` (only sessions at or above this key; the first edition hard-coded 9000), `max_sessions` (default 150) and `allow_large_backfill`. If more sessions would be extracted than `max_sessions`, the task **fails immediately with a message that names the fix** instead of quietly fanning out; tick `allow_large_backfill` only when you mean it.
-* **`skip_existing`, `run_dbt_build`, `upload_to_gcs`, `transcribe_radio`:** four more parameters, all default off. They appear in the trigger form with a description each.
+* **`skip_existing`, `run_dbt_build`, `upload_to_gcs`, `transcribe_radio`:** four more parameters, all default off. They appear in the trigger form with a description each. Three more, `dbt_scope`, `dbt_full_refresh` and `dbt_chunk_size`, only matter when `run_dbt_build` is on and are explained in Chapter 8.
+* **Structured extraction results (third edition):** the extractor no longer returns just a path. Every endpoint-and-session extraction returns `{endpoint, session_key, path, status}` where `status` is **`written`** (a Parquet file was written by this run), **`skipped`** (`skip_existing` found the file already on disk) or **`empty`** (the API had nothing). The orchestrator needs the difference: only `written` files change what dbt has to rebuild (Chapter 8).
 * **Retries and timeouts:** `retry_exponential_backoff` (3 minutes, then 6, up to 30) gives a rate-limited API time to recover, and `execution_timeout` (3 hours) stops one hung HTTP call from holding a pool slot forever.
 * **`on_failure_callback`:** the DAG imports `send_slack_failure_alert` from `plugins/slack_alerts.py`. Once a task has used up its retries it posts a Slack message with the DAG, task, run id, attempt, exception and the tail of the task log, if `ALERT_WEBHOOK_URL` is set (Task 4).
-* **`verify_and_load` now writes a manifest:** a JSON audit of the run (Task 4).
+* **`verify_and_load` now writes a manifest:** a JSON audit of the run, including the status of every extraction (Task 4).
 
 ### **Prerequisites**
 
@@ -1041,9 +1064,31 @@ def build_output_path(endpoint: str, session_val) -> str:
     return f"{base_path}/{endpoint}_{session_val}_extracted.parquet"
 
 
+# Outcome of one endpoint+session extraction. The orchestrator builds the dbt scope from these, so they are explicit:
+#   written : a Parquet file was (re)written by this run
+#   skipped : skip_existing=True and the file was already on disk; nothing was downloaded
+#   empty   : the API had nothing (404/422/no rows); no file was written by this run
+WRITTEN, SKIPPED, EMPTY = "written", "skipped", "empty"
+
+
+def _result(endpoint: str, session_val, path, status: str) -> dict:
+    """Structured, JSON-serialisable extraction result (safe to pass through Airflow XCom)."""
+    session_key = int(session_val) if str(session_val).isdigit() else str(session_val)
+    return {"endpoint": endpoint, "session_key": session_key, "path": path, "status": status}
+
+
 def extract_and_save_endpoint(endpoint: str, target_session="latest", api_params: dict = None, is_global: bool = False,
                               skip_existing: bool = False, run_id: str = None):
+    """Backwards-compatible wrapper: returns the Parquet path, or None when nothing was written or found.
+    New code should call extract_endpoint_result, which also says whether the file was written or skipped."""
+    return extract_endpoint_result(endpoint, target_session, api_params, is_global, skip_existing, run_id)["path"]
+
+
+def extract_endpoint_result(endpoint: str, target_session="latest", api_params: dict = None, is_global: bool = False,
+                            skip_existing: bool = False, run_id: str = None) -> dict:
     """
+    Same extraction as extract_and_save_endpoint, but returns {endpoint, session_key, path, status} with
+    status one of written / skipped / empty.
     Universally pulls data from any OpenF1 endpoint. 
     skip_existing: return the existing file untouched when it is already on disk (cheap incremental backfills).
     run_id: optional orchestrator run id, stamped into every row as _airflow_run_id for lineage/audit.
@@ -1080,7 +1125,7 @@ def extract_and_save_endpoint(endpoint: str, target_session="latest", api_params
         existing = build_output_path(endpoint, session_val)
         if os.path.exists(existing):
             logging.info(f"skip_existing=True and {existing} already exists. Skipping /{endpoint} for session {session_val}.")
-            return existing
+            return _result(endpoint, session_val, existing, SKIPPED)
 
     # ==========================================
     # ULTRA-HEAVY ENDPOINT PROTECTION & RETRIES
@@ -1098,7 +1143,7 @@ def extract_and_save_endpoint(endpoint: str, target_session="latest", api_params
                 error_msg = str(e)
                 if "404" in error_msg:
                     logging.warning(f"No driver data for session {session_val}. Skipping /{endpoint}.")
-                    return None
+                    return _result(endpoint, session_val, None, EMPTY)
                 elif "429" in error_msg and attempt < 2:
                     wait = 30 * (attempt + 1)
                     logging.warning(f"429 on /drivers for session {session_val}. Sleeping {wait}s (attempt {attempt+1}/3)...")
@@ -1109,7 +1154,7 @@ def extract_and_save_endpoint(endpoint: str, target_session="latest", api_params
         
         if not drivers:
             logging.warning(f"Failed to retrieve drivers for session {session_val}. Skipping /{endpoint}.")
-            return None
+            return _result(endpoint, session_val, None, EMPTY)
             
         # 2. Fetch Session Timestamps (Used if Time-Window Chunking is triggered)
         session_start, session_end = None, None
@@ -1215,7 +1260,7 @@ def extract_and_save_endpoint(endpoint: str, target_session="latest", api_params
                 error_msg = str(e)
                 if "404" in error_msg or "422" in error_msg:
                     logging.warning(f"Endpoint /{endpoint} unavailable for session {session_val}. Skipping gracefully.")
-                    return None
+                    return _result(endpoint, session_val, None, EMPTY)
                 elif "429" in error_msg and attempt < 2:
                     wait = 30 * (attempt + 1)  # 30s, 60s
                     logging.warning(f"429 on /{endpoint} session {session_val}. Sleeping {wait}s (attempt {attempt+1}/3)...")
@@ -1226,7 +1271,7 @@ def extract_and_save_endpoint(endpoint: str, target_session="latest", api_params
 
     if not records:
         logging.info(f"No records found for /{endpoint} session {session_val}. Skipping save.")
-        return None
+        return _result(endpoint, session_val, None, EMPTY)
 
     # ==========================================
     # SANITIZE & SAVE TO DISK AS PARQUET
@@ -1251,7 +1296,7 @@ def extract_and_save_endpoint(endpoint: str, target_session="latest", api_params
         pq.write_table(table, tmp_path, compression='snappy')
         os.replace(tmp_path, output_path)
         logging.info(f"Success! Saved {len(records)} records to {output_path}")
-        return output_path
+        return _result(endpoint, session_val, output_path, WRITTEN)
     except Exception as e:
         logging.error(f"Failed to save Parquet file for {endpoint}: {str(e)}")
         if os.path.exists(tmp_path):
@@ -1265,14 +1310,16 @@ def extract_and_save_endpoint(endpoint: str, target_session="latest", api_params
 2. **Resolving `"latest"`:** `latest` is a convenience alias in the API. The extractor looks up the real session number first, so the filename (`laps_9158_extracted.parquet`) always holds a real ID.
 3. **Ultra-heavy endpoint protection:** `car_data` and `location` produce several readings per second per car. The extractor therefore requests **one driver at a time**, with a 2-second pause between requests.
 4. **Error handling by status code:**
-   * **404:** the data does not exist for that session or driver. Skip gracefully and return `None`.
+   * **404:** the data does not exist for that session or driver. Skip gracefully and report the extraction as `empty`.
    * **422:** the request was too large. Switch to **time-window chunking**: ask for 15-minute slices (`date>=` and `date<` filters) between the session start and end.
    * **429:** rate limited. Wait 30 s, then 60 s, then give up.
    * **Anything else:** raise, so Airflow's own retries take over.
 5. **Run metadata (new in the second edition):** every row gets three extra columns, `_extracted_at_utc`, `_source_endpoint` and `_airflow_run_id`. When a number in the warehouse looks wrong you can trace it to the exact run and moment that produced it. dbt ignores the columns it does not select.
-6. **Skipping files that already exist (`skip_existing`):** with the DAG parameter switched on, a numeric session whose file is already on disk is returned untouched and **no API call is made**. This makes a large backfill resumable. It is deliberately off by default, and it never applies to `latest`, whose data is still changing.
+6. **Skipping files that already exist (`skip_existing`):** with the DAG parameter switched on, a numeric session whose file is already on disk is reported as `skipped` (its path is returned untouched) and **no API call is made**. This makes a large backfill resumable. It is deliberately off by default, and it never applies to `latest`, whose data is still changing.
 7. **Atomic writes:** the Parquet file is written to `<name>.tmp` and then renamed with `os.replace`. A crash mid-write can therefore never leave a half-written Parquet file that dbt would later fail to read; the temporary file is removed if the write fails.
 8. **Writing the file:** the output is `{endpoint}_{session}_extracted.parquet` in `/opt/airflow/data/raw` (overridable through the `OPENF1_OUTPUT_PATH` environment variable), compressed with snappy. The name is built by `build_output_path`, a small function the skip check and the writer share, so they can never disagree about where a file lives.
+
+9. **Structured results (third edition):** the real work now lives in `extract_endpoint_result`, which returns a small dictionary `{endpoint, session_key, path, status}` (`session_key` is the string `global` for files that are not per session). `extract_and_save_endpoint` is kept as a thin wrapper that returns only the path (or `None`), so older callers and tests keep working. Every early exit that used to `return None` now returns an `empty` result, and a skipped file returns `skipped`. The three statuses are the whole contract between extraction and the dbt step, so they are worth getting exactly right: a session that was *re-extracted* is `written`, one that was found on disk is `skipped`, and one the API had nothing for is `empty`.
 
 > **Why `/opt/airflow/data/raw`?** Compose mounts `./data` into the container (Chapter 2). Files written there appear on your machine in **airflow/data/raw/**, which is exactly where dbt will read them in Chapter 5.
 
@@ -1281,14 +1328,12 @@ def extract_and_save_endpoint(endpoint: str, target_session="latest", api_params
 Replace **airflow/dags/extract_openf1_dag.py** with the DAG below. It adds a **parameter** (`target_session_key`), a metadata task that decides *what* to extract, and mapped extraction tasks.
 
 > **The second edition's DAG is the complete one.** It also contains three **opt-in** tasks that do nothing unless you switch them on in the trigger form: `transcribe_team_radio` (explained in Chapter 6), `upload_raw_to_gcs` (Chapter 10) and `run_dbt_build` (Chapter 8). Read past them for now; every opt-in task is skipped by default, so the DAG behaves exactly like the extraction-only version until you ask for more.
+>
+> **One file the DAG needs before it will parse (third edition).** The DAG imports `modules/dbt_scope.py` at the top of the file (its `Param` defaults and error type live there). The code for it is in **Chapter 8, Task 2, Step 2**. Create that file before you save this DAG, or the Airflow UI shows an import error for it. `modules/dbt_runner.py` (Step 3) is imported lazily inside the task, so it only has to exist when you tick `run_dbt_build`.
 
 ```python
-from collections.abc import Sequence
-import json
 import logging
 import os
-import shlex
-import subprocess
 from datetime import datetime, timedelta
 
 from airflow import DAG
@@ -1297,9 +1342,13 @@ from airflow.exceptions import AirflowFailException, AirflowSkipException
 from airflow.models.param import Param
 from airflow.operators.empty import EmptyOperator
 from airflow.utils.task_group import TaskGroup
+from airflow.utils.trigger_rule import TriggerRule
 
 from hooks.openf1_hook import OpenF1Hook
 from slack_alerts import send_slack_failure_alert
+from modules.dbt_scope import (
+    DEFAULT_CHUNK_SIZE, ScopeError, build_dbt_scope, flatten_results, plan_dbt_commands, radio_transcripts_exist,
+)
 
 # ==========================================
 # DBT LOCATIONS (inside the Airflow container; see docker-compose.yaml for the mounts)
@@ -1356,6 +1405,20 @@ with DAG(
         "run_dbt_build": Param(
             default=False, type="boolean",
             description="Run `dbt build` after extraction (needs dbt + the dbt project mounted in the container).",
+        ),
+        "dbt_scope": Param(
+            default="auto", type="string", enum=["auto", "full"],
+            description="auto: dbt rebuilds only the sessions whose files were written in this run. "
+                        "full: whole graph with no session scope (the telemetry tables still load only sessions they lack).",
+        ),
+        "dbt_full_refresh": Param(
+            default=False, type="boolean",
+            description="Deliberate `dbt build --full-refresh` of EVERY model, including the 200M+ row telemetry tables. "
+                        "Also needs allow_large_backfill.",
+        ),
+        "dbt_chunk_size": Param(
+            default=DEFAULT_CHUNK_SIZE, type="integer", minimum=1,
+            description="Multi-session runs build the telemetry group this many sessions at a time.",
         ),
         "transcribe_radio": Param(
             default=False, type="boolean",
@@ -1428,8 +1491,8 @@ with DAG(
     # ==========================================
     @task(pool='openf1_api_pool')
     def extract_mapped_data(endpoint: str, target_session: str, is_global: bool = False, **context):
-        from modules.universal_extractor import extract_and_save_endpoint
-        return extract_and_save_endpoint(
+        from modules.universal_extractor import extract_endpoint_result
+        return extract_endpoint_result(
             endpoint=endpoint,
             target_session=target_session,
             is_global=is_global,
@@ -1489,23 +1552,19 @@ with DAG(
     def verify_and_load(event_results, telemetry_results, results_out, **context):
         from modules.pipeline_utils import build_manifest
 
-        flat_results = []
-        for task_group_results in [event_results, telemetry_results, results_out]:
-            for item in task_group_results:
-                if isinstance(item, Sequence) and not isinstance(item, (str, bytes)):
-                    flat_results.extend(item)
-                else:
-                    flat_results.append(item)
-
-        saved_files = [r for r in flat_results if r is not None]
+        results = flatten_results(event_results, telemetry_results, results_out)
+        counts = {st: sum(1 for r in results if r.get("status") == st) for st in ("written", "skipped", "empty")}
+        # a skipped file is already on disk and still belongs in the manifest / GCS upload, as before
+        saved_files = [r["path"] for r in results if r.get("path") and r.get("status") in ("written", "skipped")]
 
         if not saved_files:
             logging.warning("Pipeline completed, but NO files were successfully extracted or saved.")
-            return {"files": [], "manifest_path": None}
+            return {"files": [], "manifest_path": None, "results": results}
 
-        manifest_path = build_manifest(saved_files, RAW_DIR, context["run_id"])
-        logging.info(f"{len(saved_files)} Parquet files extracted. Manifest written to {manifest_path}. Ready for dbt!")
-        return {"files": saved_files, "manifest_path": manifest_path}
+        manifest_path = build_manifest(saved_files, RAW_DIR, context["run_id"], results=results)
+        logging.info(f"{len(saved_files)} Parquet files ready ({counts['written']} written, {counts['skipped']} skipped, "
+                     f"{counts['empty']} empty). Manifest written to {manifest_path}. Ready for dbt!")
+        return {"files": saved_files, "manifest_path": manifest_path, "results": results}
 
     load_task = verify_and_load(event_results, telemetry_results, results_out)
 
@@ -1523,24 +1582,37 @@ with DAG(
         return upload_raw_files(load_result["files"], bucket=bucket)
 
     # ==========================================
-    # OPTIONAL: RUN DBT AFTER EXTRACTION
+    # OPTIONAL: RUN DBT AFTER EXTRACTION (scoped to what this run changed)
     # ==========================================
-    @task
-    def run_dbt_build(load_result, **context):
-        if not context["params"]["run_dbt_build"]:
-            raise AirflowSkipException("run_dbt_build is off for this run.")
-        if not load_result["files"]:
-            raise AirflowSkipException("Nothing was extracted, so there is nothing to transform.")
+    # Runs after transcription too (radio transcript files feed fct_radio_messages). The trigger rule lets it run when
+    # the mapped transcription tasks were SKIPPED (transcribe_radio=false); a failed transcription still blocks it.
+    @task(trigger_rule=TriggerRule.NONE_FAILED)
+    def run_dbt_build(load_result, selected_session_keys, **context):
+        from modules.dbt_runner import DbtRunError, run_dbt_plan
 
-        env = {**os.environ, "DBT_PROFILES_DIR": DBT_PROFILES_DIR}
-        cmd = f"dbt build --target {shlex.quote(DBT_TARGET)} --profiles-dir {shlex.quote(DBT_PROFILES_DIR)}"
-        logging.info(f"Running: {cmd} (cwd={DBT_PROJECT_DIR})")
-        result = subprocess.run(cmd, shell=True, capture_output=True, text=True, cwd=DBT_PROJECT_DIR, env=env)
-        logging.info(result.stdout[-6000:])
-        if result.returncode != 0:
-            logging.error(result.stderr[-3000:])
-            raise AirflowFailException(f"dbt build failed with exit code {result.returncode}. See the task log above.")
-        return "dbt build succeeded"
+        p = context["params"]
+        if not p["run_dbt_build"]:
+            raise AirflowSkipException("run_dbt_build is off for this run.")
+        try:
+            scope = build_dbt_scope(
+                load_result["results"], selected_session_keys,
+                dbt_scope=p["dbt_scope"], dbt_full_refresh=bool(p["dbt_full_refresh"]),
+                chunk_size=int(p["dbt_chunk_size"]), allow_large_backfill=bool(p["allow_large_backfill"]),
+                non_telemetry_changed=bool(p["transcribe_radio"]),   # new transcript files change fct_radio_messages
+            )
+            if scope["mode"] == "none":
+                raise AirflowSkipException(f"dbt skipped: {scope['reason']}.")
+            steps = plan_dbt_commands(
+                scope, target=DBT_TARGET, profiles_dir=DBT_PROFILES_DIR,
+                radio_transcripts=radio_transcripts_exist(RAW_DIR), chunk_size=int(p["dbt_chunk_size"]),
+                dbt_executable=os.environ.get("DBT_EXECUTABLE", "dbt"),
+            )
+            summary = run_dbt_plan(steps, cwd=DBT_PROJECT_DIR, profiles_dir=DBT_PROFILES_DIR, scope=scope)
+        except ScopeError as exc:
+            raise AirflowFailException(str(exc)) from exc
+        except DbtRunError as exc:
+            raise AirflowFailException(str(exc)) from exc
+        return summary
 
     # ==========================================
     # OPTIONAL: TRANSCRIBE TEAM RADIO (one session at a time: CPU heavy)
@@ -1555,7 +1627,7 @@ with DAG(
     radio_task = transcribe_team_radio.expand(target_session=all_sessions)
 
     upload_task = upload_raw_to_gcs(load_task)
-    dbt_task = run_dbt_build(load_task)
+    dbt_task = run_dbt_build(load_task, all_sessions)
 
     # ==========================================
     # EXPLICIT DEPENDENCY GRAPH
@@ -1566,6 +1638,7 @@ with DAG(
     [all_sessions, race_sessions, quali_race_sessions] >> results_group
     [event_group, telemetry_group, results_group] >> load_task
     results_group >> radio_task
+    radio_task >> dbt_task      # dbt waits for transcription (trigger rule tolerates the skipped mapped tasks)
 ```
 
 **What changed and why**
@@ -1579,9 +1652,11 @@ with DAG(
 * **Three filter tasks:** `get_all_keys`, `get_race_keys`, `get_quali_and_race_keys` split the session list by type. This is **smart routing**: `intervals` and `overtakes` only exist for races, and `starting_grid` only for qualifying, sprint and race sessions. Sending them elsewhere would just produce 404s.
 * **`.partial(...).expand(target_session=...)`:** `partial` fixes the constant arguments (the endpoint name), `expand` supplies the list that fans out into parallel tasks.
 * **`@task(pool="openf1_api_pool")`:** the pool is applied **only to the extraction tasks**, so the cheap metadata tasks are never stuck in a queue behind them.
+* **Mapped tasks now return result dictionaries (third edition):** `extract_mapped_data` calls `extract_endpoint_result`, so every mapped instance returns `{endpoint, session_key, path, status}`. `verify_and_load` flattens all of them with `flatten_results`, builds the manifest (with the statuses), and returns the list of files **and** the list of results. Only the results travel on to `run_dbt_build`, which turns them into the dbt scope (Chapter 8).
+* **Three new dbt parameters and a new order:** `dbt_scope`, `dbt_full_refresh` and `dbt_chunk_size` join the trigger form, and `run_dbt_build` now also waits for the radio transcription task (with a trigger rule that tolerates it being skipped). Both are explained in Chapter 8.
 * **Three task groups:** `global_and_reference` (data that does not vary per session, extracted once), `telemetry_and_performance` (the heavy endpoints, for all sessions) and `race_results_and_events`.
 
-> **A note on imports.** This DAG imports `extract_and_save_endpoint` at the top of the file, unlike the lazy imports of Chapter 2. That is fine here because importing the module only *defines* functions; nothing calls the API until a task runs. The rule is "never **execute** API calls at the top level", not "never import".
+> **A note on imports.** The DAG imports the pure helpers `modules.dbt_scope` at the top of the file, unlike the lazy imports of Chapter 2. That is fine because that module only *defines* functions and has no Airflow, network or dbt dependency; nothing is called until a task runs. The heavier imports (`universal_extractor`, `pipeline_utils`, `dbt_runner`, the radio transcriber) stay **inside** the task functions. The rule is "never **execute** API calls at the top level", not "never import".
 
 #### **Task 3: Run and Verify**
 
@@ -1618,9 +1693,11 @@ from datetime import datetime, timezone
 import pyarrow.parquet as pq
 
 
-def build_manifest(files, raw_dir: str, run_id: str) -> str:
+def build_manifest(files, raw_dir: str, run_id: str, results=None) -> str:
     """Write raw_dir/_manifests/<run_id>.json listing every file with its row count and size.
-    dbt tests / reviewers can reconcile what was extracted in a run against what reached the warehouse."""
+    dbt tests / reviewers can reconcile what was extracted in a run against what reached the warehouse.
+    results (optional): the extractor results {endpoint, session_key, path, status}; their status
+    (written / skipped / empty) is recorded so a manifest shows what the run actually changed."""
     entries = []
     for f in files:
         try:
@@ -1636,6 +1713,12 @@ def build_manifest(files, raw_dir: str, run_id: str) -> str:
         "total_rows": sum(e["rows"] or 0 for e in entries),
         "files": sorted(entries, key=lambda e: e["file"]),
     }
+    if results is not None:
+        clean = [{"endpoint": r.get("endpoint"), "session_key": r.get("session_key"),
+                  "file": os.path.basename(r["path"]) if r.get("path") else None, "status": r.get("status")}
+                 for r in results if isinstance(r, dict)]
+        manifest["status_counts"] = {st: sum(1 for r in clean if r["status"] == st) for st in ("written", "skipped", "empty")}
+        manifest["results"] = sorted(clean, key=lambda r: (str(r["endpoint"]), str(r["session_key"])))
     out_dir = os.path.join(raw_dir, "_manifests")
     os.makedirs(out_dir, exist_ok=True)
     safe = "".join(c if c.isalnum() or c in "-_." else "_" for c in str(run_id))
@@ -1667,7 +1750,7 @@ def notify_failure(context):
 
 **Why it is written this way**
 
-* **The manifest** (`airflow/data/raw/_manifests/<run_id>.json`) lists every file the run saved with its **row count and size**. A later reviewer, or a dbt test, can reconcile "what was extracted" against "what reached the warehouse".
+* **The manifest** (`airflow/data/raw/_manifests/<run_id>.json`) lists every file the run saved with its **row count and size**. A later reviewer, or a dbt test, can reconcile "what was extracted" against "what reached the warehouse". Since the third edition it also records, when `build_manifest` is given the extractor results, a `results` list (endpoint, session, file name, `written` / `skipped` / `empty`) and a `status_counts` summary, so the manifest shows what the run actually **changed**, not just which files exist. A manifest written the old way (no results) is unchanged.
 * **The run id is sanitised** before it becomes a file name. Airflow run ids contain `:` (for example `manual__2026-01-01T00:00:00+00:00`), which Windows refuses in file names, so the helper replaces any other character first. A unit test pins that behaviour; it was written as a precaution, not in response to a failure.
 * **A corrupt file is recorded, not fatal:** if a Parquet file cannot be read, its entry gets `rows: null` and the manifest is still written. An audit log that crashes on the thing it is auditing is useless.
 * **`notify_failure` never raises.** Alerting runs *while something is already failing*; if the webhook is down, the original error must stay visible, not be replaced by a second one. Any Slack-compatible webhook works because the payload is just `{"text": "..."}`. The DAG itself uses the richer Slack callback described next; `notify_failure` stays in `pipeline_utils.py` as the dependency-free alternative and is covered by a unit test.
@@ -1792,13 +1875,16 @@ New in the second edition. The extractor is the part of the project that talks t
 fake_hook.script["/car_data"] = car      # a function that raises "422" unless a time window is requested
 path = ue.extract_and_save_endpoint("car_data", target_session=7)
 assert pq.read_table(path).num_rows == 3   # the extractor fell back to three 15-minute windows
+
+res = ue.extract_endpoint_result("laps", target_session=1)           # third edition: the structured form
+assert res["status"] == "written" and res["session_key"] == 1
 ```
 
 ```bash
 python -m pytest -q airflow/tests
 ```
 
-The tests cover the sanitiser, 404 skipping, 422 time-window chunking, 429 backoff, idempotent file names, `skip_existing`, atomic writes, the manifest, the generic failure callback, the GCS loader (Chapter 10), the radio transcriber (Chapter 6) and the BigQuery loader (Chapter 10). The 422 and 429 paths existed in the first edition but had never been tested; writing the tests did not find a bug there, which is itself useful information.
+The tests cover the sanitiser, 404 skipping, 422 time-window chunking, 429 backoff, idempotent file names, `skip_existing`, atomic writes, the structured `written` / `skipped` / `empty` results, the manifest (with and without statuses), the dbt scope builder and runner (Chapter 8), the generic failure callback, the GCS loader (Chapter 10), the radio transcriber (Chapter 6) and the BigQuery loader (Chapter 10). The 422 and 429 paths existed in the first edition but had never been tested; writing the tests did not find a bug there, which is itself useful information.
 
 ### **Learner Pitfalls & Troubleshooting**
 
@@ -1816,7 +1902,7 @@ The tests cover the sanitiser, 404 skipping, 422 time-window chunking, 429 backo
 
 * **The Problem:** a new session key fails with 404 for some endpoints but not others.
 * **Why it Happens:** not every endpoint has data for every session type, or the session has not published it yet.
-* **The Solution:** this is expected. The extractor returns `None` and `verify_and_load` counts only real files.
+* **The Solution:** this is expected. The extractor reports the extraction as `empty` (for example `starting_grid` for a session type that has none) and `verify_and_load` counts only files that exist.
 
 * **The Problem (confirmed in the final log of the build):** a run fails with `404` on `/drivers?year=2023` while you believe you are running the new DAG.
 * **Why it Happens (inference):** the log line `universal_extractor.py:15 ... params {'year': 2023}` comes from the **old** Chapter 2 extractor, whose default was `{"year": 2023}`. The new DAG was running against a stale module file. The DAG and the module it imports must be updated **together**.
@@ -1825,6 +1911,10 @@ The tests cover the sanitiser, 404 skipping, 422 time-window chunking, 429 backo
 * **The Problem (second edition):** a run fails at `fetch_session_metadata` with `... sessions would be extracted (guard max_sessions=150). Narrow the range with min_session_key, or tick allow_large_backfill`.
 * **Why it Happens:** that is the fan-out guard doing its job: `all` matched more sessions than `max_sessions`.
 * **The Solution:** pass `min_session_key` to bound the backfill (for example the first session key of the season you want), or tick `allow_large_backfill` if the size is intentional.
+
+* **The Problem (third edition):** `verify_and_load` logs `NO files were successfully extracted` and returns `'results': []`, although the extraction tasks ran for minutes and the Parquet files are on disk. `run_dbt_build` then reports `keys=[]`.
+* **Why it Happens:** the DAG passes each task group's outputs as a **list of mapped-task results**, and Airflow resolves each mapped output to a **lazy sequence**, which is not a Python `list` or `tuple`. The first version of `flatten_results` only unpacked lists and tuples, so it silently threw every result away. The unit tests passed because they used plain lists.
+* **The Solution:** `flatten_results` now recurses into anything iterable (except dictionaries and strings), drops `None` for skipped mapped instances, and **raises** on any other leaf instead of ignoring it. The lesson is general: a test double must have the same *shape* as what the real framework passes, and code that discards unexpected input hides exactly the data downstream steps depend on. The test now uses a stand-in for Airflow's lazy sequence.
 
 * **The Problem (second edition):** with `skip_existing` on, a session's data looks **stale** or incomplete.
 * **Why it Happens:** an earlier run extracted that session while it was still live, and the file is now being skipped because it exists.
@@ -1989,6 +2079,9 @@ clean-targets:
 # Tunable analytics assumptions. Change them here, not inside the SQL.
 # ---------------------------------------------------------------------------
 vars:
+  # SESSION SCOPE (macros/scope.sql). Airflow passes the sessions a run changed: --vars '{session_keys: [9158]}'. Empty = no scope, which
+  # behaves as before (the telemetry tables then load only the sessions they do not hold yet). `telemetry_only_sessions` is the old name.
+  session_keys: []
   # Fuel burn lap-time effect (s per lap of fuel burned). ASSUMPTION: ~0.03-0.04 s/lap is a commonly
   # quoted figure; real values vary by circuit/era. Used only for fuel_corrected_lap_time_seconds.
   fuel_effect_seconds_per_lap: 0.035
@@ -2013,6 +2106,8 @@ vars:
   corner_entry_distance_m: 150
   corner_exit_distance_m: 100
   corner_brake_lookback_m: 100       # how far before entry a brake application still belongs to this corner
+  stale_telemetry_min_samples: 8      # this many consecutive identical non-zero speed+gear samples (about 2 s) are a frozen reading, not driving
+  corner_geometry_search_bins: 5     # nearest bin (with a position) searched for a corner's entry and exit point; the axis is sparse where the car is fast
   corner_slow_kph: 120               # apex speed classes
   corner_fast_kph: 220
   # --- undercut / overcut ---
@@ -2036,13 +2131,35 @@ models:
   dbt_f1_transformations:
     staging:
       +materialized: view
+      # The telemetry group = the scoped views plus every model that reads them (directly or through fct_telemetry). Airflow selects it
+      # per chunk of sessions (`--select tag:telemetry_group`) and builds everything else once (`--exclude tag:telemetry_group`).
+      # Nothing outside this group depends on it. Keep this list in sync with ci/check_scoped_views.py (it fails on a mismatch).
+      stg_car_data:
+        +tags: [telemetry_group]
+      stg_location:
+        +tags: [telemetry_group]
     intermediate:
       +materialized: table
     marts:
       +materialized: table
+      analytics:
+        fct_telemetry:
+          +tags: [telemetry_group]
+        fct_telemetry_distance_trace:
+          +tags: [telemetry_group]
+        fct_telemetry_lap_summary:
+          +tags: [telemetry_group]
+        fct_lap_time_delta_trace:
+          +tags: [telemetry_group]
+        dim_session_corners:
+          +tags: [telemetry_group]
+        fct_corner_performance:
+          +tags: [telemetry_group]
 ```
 
-This sets the rule from Chapter 4: everything in `staging/` is a **view**, everything in `intermediate/` and `marts/` is a **table**.
+This sets the rule from Chapter 4: everything in `staging/` is a **view**, everything in `intermediate/` and `marts/` is a **table**. There is one deliberate exception, the **telemetry group**: `stg_car_data`, `stg_location` and the six telemetry models downstream of them (Chapters 6 and 7) carry the tag `telemetry_group`, and the six models are **incremental** because telemetry is far too large to rebuild on every run.
+
+**Session scope (third edition).** The first variable, `session_keys`, is empty by default. When it is set, for example `--vars '{session_keys: [9158]}'`, dbt builds the telemetry group for **only those sessions and replaces them** instead of appending (Chapter 7 explains how); Airflow sets it for you (Chapter 8). `telemetry_only_sessions` is the first edition's name for the same variable and still works as an alias. The tags under `models:` are how Airflow selects the group (`--select tag:telemetry_group`) or leaves it out (`--exclude tag:telemetry_group`).
 
 The long `vars:` block is new in the second edition. It holds every **tunable assumption** in one place (the fuel-burn effect, the DRS-range threshold, the corner-detection thresholds and so on), so that changing an assumption never means editing SQL. Each variable is explained in the chapter that uses it, with the reason for its default.
 
@@ -2630,6 +2747,8 @@ SELECT * FROM renamed_and_casted
 **`models/staging/stg_car_data.sql`**
 
 ```sql
+{# SCOPED VIEW: with var session_keys set it exposes only those sessions (see macros/scope.sql); unset, it exposes everything.
+   Only this view and stg_location are scoped. A `table` model must never read them (ci/check_scoped_views.py). #}
 WITH raw_car_data AS (
     SELECT * FROM {{ source('openf1_raw', 'car_data') }}
 ),
@@ -2650,11 +2769,14 @@ renamed_and_casted AS (
     WHERE driver_number IS NOT NULL
 )
 SELECT * FROM renamed_and_casted
+WHERE {{ in_scope('session_key') }}
 ```
 
 **`models/staging/stg_location.sql`**
 
 ```sql
+{# SCOPED VIEW: with var session_keys set it exposes only those sessions (see macros/scope.sql); unset, it exposes everything.
+   Only this view and stg_location are scoped. A `table` model must never read them (ci/check_scoped_views.py). #}
 WITH raw_location AS (
     SELECT * FROM {{ source('openf1_raw', 'location') }}
 ),
@@ -2672,6 +2794,7 @@ renamed_and_casted AS (
     WHERE driver_number IS NOT NULL
 )
 SELECT * FROM renamed_and_casted
+WHERE {{ in_scope('session_key') }}
 ```
 
 **`models/staging/stg_radio_transcripts.sql`**
@@ -2710,7 +2833,7 @@ WHERE FALSE
 
 **Notes on specific models**
 
-* **`stg_car_data` and `stg_location`:** `date` is renamed to `telemetry_timestamp` or similar, to avoid the reserved-feeling word `date`.
+* **`stg_car_data` and `stg_location`:** `date` is renamed to `telemetry_timestamp` or similar, to avoid the reserved-feeling word `date`. They are also the **only scoped views** (third edition): the last line, `WHERE {{ in_scope('session_key') }}`, keeps every row when no scope is set and keeps only the scoped sessions when `session_keys` is set. The macro is in Chapter 7. The rule that makes this safe: **a `table` model must never read a scoped view**, because a table rebuilt from a scoped view would silently lose every session outside the scope. `ci/check_scoped_views.py` (Chapter 11) enforces it.
 * **`stg_laps` (changed):** keeps `date_start`, the **lap start time**. The first edition dropped it, and that single omission meant weather, position, gaps and telemetry could not be aligned to a lap at all: it is the root cause of most of the new analytics in Chapter 6. It also keeps the three speed-trap readings.
 * **`stg_intervals` (changed):** values stay **text** (`interval_raw`, `gap_to_leader_raw`) because the API mixes numbers and strings such as `+1 LAP`, and it now keeps the sample **timestamp**. The `interval` column is quoted through `adapter.quote`, because `interval` is a reserved word in BigQuery.
 * **`stg_pit` and `stg_overtakes` (changed):** both keep their event timestamps, which the undercut and overtake analysis in Chapter 6 joins on.
@@ -4087,7 +4210,7 @@ models:
         description: "Pit entry to exit as reported by OpenF1 (NOT stationary time)."
         data_tests: [not_null]
       - name: time_lost_seconds
-        description: "In-lap + out-lap minus 2x the driver's median clean lap. Not meaningful under SC/VSC (see is_under_neutralisation)."
+        description: "In-lap + out-lap minus 2x the driver's median clean lap. Not meaningful under SC/VSC (see is_under_neutralisation); NULL for a lap-1 stop."
 
   - name: fct_penalties
     description: "Penalties parsed from race control messages; unparsed fields are NULL."
@@ -4146,26 +4269,27 @@ models:
 
   - name: fct_telemetry
     description: >
-      Car telemetry with ASOF-joined position and lap number. Incremental by session.
+      Car telemetry with ASOF-joined position and lap number. Incremental by session; a scoped run (var session_keys) replaces those sessions.
       Uniqueness is deliberately not tested here (tens of millions of rows); see assert_telemetry_speed_plausible.
+      The not_null tests are scope-aware (not_null_in_scope): a scoped build scans only the sessions it replaced.
     columns:
       - name: session_key
-        data_tests: [not_null]
+        data_tests: [not_null_in_scope]
       - name: telemetry_timestamp
-        data_tests: [not_null]
+        data_tests: [not_null_in_scope]
 
   - name: fct_telemetry_lap_summary
-    description: "Per-lap telemetry KPIs (top speed, throttle/brake application, braking zones, DRS, gear usage)."
+    description: "Per-lap telemetry KPIs (top speed, throttle/brake application, braking zones, DRS, gear usage). Incremental by session."
     data_tests:
-      - unique_combination_of_columns: {arguments: {combination_of_columns: [session_key, driver_number, lap_number]}}
+      - unique_combination_of_columns: {arguments: {combination_of_columns: [session_key, driver_number, lap_number], scope_column: session_key}}
 
   - name: fct_telemetry_distance_trace
-    description: "Telemetry on a distance axis (var distance_bin_metres) for lap-to-lap comparison."
+    description: "Telemetry on a distance axis (var distance_bin_metres) for lap-to-lap comparison. Incremental by session."
     data_tests:
-      - unique_combination_of_columns: {arguments: {combination_of_columns: [session_key, driver_number, lap_number, distance_bin]}}
+      - unique_combination_of_columns: {arguments: {combination_of_columns: [session_key, driver_number, lap_number, distance_bin], scope_column: session_key}}
 
   - name: fct_lap_time_delta_trace
-    description: "Each driver's best lap vs the session fastest lap along the lap distance."
+    description: "Each driver's best lap vs the session fastest lap along the lap distance. Incremental by session."
 
   - name: fct_championship_standings
     description: "Driver standings snapshots from the (beta) OpenF1 championship endpoint."
@@ -4222,18 +4346,18 @@ models:
 
   - name: dim_session_corners
     description: >
-      DERIVED corners (detected from reference-lap telemetry, not official turn numbers). One row per detected apex per session.
+      DERIVED corners (detected from reference-lap telemetry, not official turn numbers). One row per detected apex per session. Incremental by session.
     data_tests:
-      - unique_combination_of_columns: {arguments: {combination_of_columns: [session_key, corner_number]}}
+      - unique_combination_of_columns: {arguments: {combination_of_columns: [session_key, corner_number], scope_column: session_key}}
     columns:
       - name: speed_class
         data_tests:
           - accepted_values: {arguments: {values: ['SLOW', 'MEDIUM', 'FAST']}}
 
   - name: fct_corner_performance
-    description: "Entry/apex/exit speed, braking distance and throttle pick-up per driver per lap per detected corner."
+    description: "Entry/apex/exit speed, braking distance and throttle pick-up per driver per lap per detected corner. Incremental by session."
     data_tests:
-      - unique_combination_of_columns: {arguments: {combination_of_columns: [session_key, driver_number, lap_number, corner_number]}}
+      - unique_combination_of_columns: {arguments: {combination_of_columns: [session_key, driver_number, lap_number, corner_number], scope_column: session_key}}
 
   - name: fct_radio_messages
     description: >
@@ -4253,7 +4377,7 @@ Each test is a query that returns the **bad rows**; zero rows means pass. A **gr
 
 > **Documentation drift, a lesson in itself.** An earlier version of this file described `is_overall_fastest_lap` and `is_slow_stop` columns and an ASOF join for weather. **None of those exist in the models.** dbt did not complain because only the *tested* columns are checked, so the docs lied quietly. The version above is corrected to match the SQL. Treat `schema.yml` as code: review it whenever a model changes.
 
-**The singular tests (new in the second edition).** Besides the tests in `schema.yml`, `dbt_f1_transformations/tests/` holds 24 queries written for this project. The custom generic test `unique_combination_of_columns` lives in `tests/generic/` and has **no package dependency** (the dbt package hub is not always reachable).
+**The singular tests (new in the second edition).** Besides the tests in `schema.yml`, `dbt_f1_transformations/tests/` holds 32 queries written for this project. The custom generic tests live in `tests/generic/` and have **no package dependency** (the dbt package hub is not always reachable): `unique_combination_of_columns`, and, new in the third edition, `not_null_in_scope`.
 
 | Test | What it protects | Severity |
 |---|---|---|
@@ -4278,9 +4402,25 @@ Each test is a query that returns the **bad rows**; zero rows means pass. A **gr
 | `assert_penalties_not_double_counted` | a "penalty served" notice is not counted as a second penalty | error on CI, **warn elsewhere** |
 | `assert_telemetry_samples_within_lap_window` | no telemetry sample is credited to a lap after that lap ended | error |
 | `assert_corner_apex_is_a_minimum` | on each session's reference lap, an apex is slower than its entry and exit | warn |
+| `assert_unavailable_telemetry_is_masked` | a throttle above 100 ("no data") never reaches the distance trace as a value | error |
+| `assert_frozen_telemetry_is_masked` | CI only: a run of identical readings (the synthetic data freezes 3 s of one lap) comes out of the distance trace as NULL, not as driving | error, CI only |
+| `assert_corner_direction_needs_angle` | a corner has a direction only if its turn angle was measured | error |
+| `assert_out_laps_follow_api_flag` | where the API flags out-laps, a lap is an out-lap exactly when the API says so | error |
+| `assert_green_stops_have_green_laps` | a stop counted as green-flag has a green in-lap and out-lap | error |
+| `assert_grid_sources_are_not_mixed` | a session's grid comes from the starting-grid feed or from a classification, never a mix | error |
+| `assert_push_laps_are_not_in_or_out_laps` | CI only: relies on the shape of the synthetic qualifying session | error, CI only |
+| `assert_sprint_grid_falls_back_to_qualifying_classification` | CI only: a Sprint with no starting-grid rows takes its grid from the qualifying classification | error, CI only |
 | `assert_positions_in_range`, `assert_race_results_have_laps`, `assert_results_have_driver_dimension` | sanity and reconciliation | warn |
 
 **Why `assert_lap_start_times_increase` and `assert_stint_ranges_valid` are errors.** Both check the *source data*, and real OpenF1 data does contain such rows (the author's first real run reported 59 and 23). Instead of downgrading them to warnings, `stg_laps` and `stg_stints` now remove those rows, so the tests guard the staging layer's cleaning and stay strict everywhere. **Three newer tests are different.** `assert_race_trace_leader_time_increases`, `assert_neutralisation_periods_do_not_overlap` and `assert_penalties_not_double_counted` can fail on real data for reasons that need a human look, so their severity is set from the target name: `config(severity = 'error' if target.name == 'ci' else 'warn')`. `docs/ISSUES_CHECKLIST.md` lists what each real-data warning turned out to be.
+
+**Scope-aware tests (third edition).** The telemetry tables hold hundreds of millions of rows, so a build scoped to one session must not scan all of them for its tests. The heavy tests therefore honour the session scope: the singular telemetry tests (`assert_telemetry_speed_plausible`, `assert_telemetry_samples_within_lap_window`, `assert_unavailable_telemetry_is_masked`, `assert_frozen_telemetry_is_masked`, `assert_corner_apex_is_a_minimum`, `assert_corner_direction_needs_angle`) end with `AND {{ in_scope('session_key') }}`, which is the always-true `1 = 1` when no scope is set, and the generic tests on the heavy models take a `scope_column`:
+
+```yaml
+- unique_combination_of_columns: {arguments: {combination_of_columns: [session_key, driver_number, lap_number], scope_column: session_key}}
+```
+
+`fct_telemetry` uses the new `not_null_in_scope` instead of the built-in `not_null`. Both generic tests wrap the table in `scoped_test_relation(model, scope_column)` (Chapter 7), so with a scope set only the replaced sessions are checked and with no scope the whole table is checked exactly as before. This is done inside the test macros rather than with a `where:` config because `schema.yml` cannot call project macros. A scoped build can only change the sessions it replaced, so checking only those loses nothing.
 
 **The test suite was mutation-tested.** A test that has never failed proves nothing, so a copy of the synthetic data was deliberately corrupted (a duplicated lap, a 999 km/h telemetry sample, a duplicated grain) and the tests were confirmed to catch each. The fixtures also contain situations that real data produced: garage visits reported as pit stops, a Sprint typed as a Race, a VSC upgraded to a Safety Car and a penalty followed by its served notice.
 
@@ -4998,6 +5138,7 @@ Everything so far handles thousands or millions of rows. **Telemetry** (`car_dat
 
 * The incident chain and the streaming export: **[VERIFIED]** (the logs show the failures, and later successful exports of about 21 and 43 minutes).
 * The incremental ASOF model: **[VERIFIED]** on real data. A full first build over the author's whole dataset **took 1 hour 25 minutes** (single thread, spilling to disk); Task 3 shows how to build only the sessions you need instead.
+* Session-scoped incremental builds (third edition: the scope macros, replace-by-session in all six telemetry models, scope-aware tests): **[VERIFIED]**. The equivalence check on the generated dataset passes (replace, idempotency, zero rows, vanished upstream data); a deliberately damaged session on a copy of the author's real warehouse was restored exactly; and one Airflow run in Docker replaced a single session while every other session's row counts stayed identical.
 * The distance axis, the delta trace and the derived corners (Tasks 6 to 8, new in the second edition): **[VERIFIED ON SYNTHETIC DATA]**. The delta trace and the two corner models also built on the author's real data in seconds each, but **whether the detected corners are good on real circuits has not been reviewed**.
 
 **Concepts introduced in this chapter**
@@ -5012,7 +5153,9 @@ Everything so far handles thousands or millions of rows. **Telemetry** (`car_dat
 * **Distance axis:** telemetry is recorded against *time*. To compare two laps you need it against *distance along the lap*, so that "300 m into the lap" means the same place for both drivers.
 * **Normalisation:** rescaling a measurement to a common reference. Here, every complete lap is rescaled to the same track length, because integrating speed over time drifts a little every lap.
 * **Apex:** the slowest point of a corner. The API gives no corner data, so Task 8 *detects* corners as speed minima.
-* **Opt-in session build:** telemetry built only for chosen sessions (`telemetry_only_sessions`), so a failure loses one small build instead of the whole run.
+* **Session scope (third edition):** the run tells dbt which sessions changed (`--vars '{session_keys: [9158]}'`) and the telemetry models build **only those sessions**, so a failure loses one small build instead of the whole run. It replaces the first edition's opt-in `telemetry_only_sessions`, which still works as an alias.
+* **Replace, never append:** a scoped session is **deleted and re-inserted**. Re-extracting a live session therefore refreshes it with no duplicates and no stale rows, even if some of its raw rows have vanished.
+* **Telemetry group:** `stg_car_data`, `stg_location` and the six telemetry models (`fct_telemetry`, `fct_telemetry_distance_trace`, `fct_telemetry_lap_summary`, `fct_lap_time_delta_trace`, `dim_session_corners`, `fct_corner_performance`), tagged `telemetry_group`. Nothing outside the group depends on it.
 
 ### **Prerequisites**
 
@@ -5059,29 +5202,27 @@ Create **models/marts/analytics/fct_telemetry.sql**.
   * ASOF joins: "latest location reading at or before this telemetry sample" (the two feeds are not
     timestamp-aligned, so an equality join silently drops almost every row).
   * location_age_ms exposes how stale the matched position is; positions older than 2 s are set to NULL.
-  * INCREMENTAL by session: a session already present is skipped. To re-load a session whose raw files were
-    re-extracted:  dbt run-operation delete_sessions_from_incrementals --args '{sessions: [9158]}'  then dbt run.
+  * INCREMENTAL by session. Scoped run (--vars '{session_keys: [9158]}'): those sessions are replaced, never appended. Unscoped run: a
+    session already present is skipped. Manual re-load without a scope:
+    dbt run-operation delete_sessions_from_incrementals --args '{sessions: [9158]}'  then dbt run.
 #}
 {{ config(
     materialized='incremental',
-    incremental_strategy=var('bq_incremental_strategy', 'insert_overwrite') if target.type == 'bigquery' else 'append',
-    unique_key=['session_key', 'driver_number', 'telemetry_timestamp'] if (target.type == 'bigquery' and var('bq_incremental_strategy', 'insert_overwrite') == 'merge') else none,
+    incremental_strategy=var('bq_incremental_strategy', 'insert_overwrite') if target.type == 'bigquery' else 'delete+insert',
+    unique_key=(['session_key', 'driver_number', 'telemetry_timestamp'] if var('bq_incremental_strategy', 'insert_overwrite') == 'merge' else none) if target.type == 'bigquery' else 'session_key',
     partition_by=({'field': 'session_key', 'data_type': 'int64',
                    'range': {'start': var('bq_session_key_start'), 'end': var('bq_session_key_end'), 'interval': 1}}
-                  if target.type == 'bigquery' else none)
+                  if target.type == 'bigquery' else none),
+    pre_hook="{{ scoped_pre_delete() }}"
 ) }}
 
-{# Optional: --vars '{telemetry_only_sessions: [9158]}' builds telemetry for just those sessions. The downstream telemetry marts
-   (lap summary, distance trace, corners, delta trace) only see what is in this table, so they follow automatically. #}
+{# SESSION SCOPE (macros/scope.sql). With --vars '{session_keys: [9158]}' those sessions are REPLACED: stg_car_data / stg_location expose only
+   them, the pre_hook deletes them from this table first (so a session whose upstream rows vanished is cleared too), and delete+insert on
+   session_key swaps in the fresh rows. With no scope, only sessions this table does not hold yet are loaded. The downstream telemetry marts
+   read this table and are scoped the same way. #}
 WITH car_data AS (
     SELECT * FROM {{ ref('stg_car_data') }}
-    WHERE 1 = 1
-    {% if var('telemetry_only_sessions', []) | length > 0 %}
-      AND session_key IN ({{ var('telemetry_only_sessions') | join(', ') }})
-    {% endif %}
-    {% if is_incremental() %}
-      AND session_key NOT IN (SELECT DISTINCT session_key FROM {{ this }})
-    {% endif %}
+    WHERE {{ telemetry_load_filter('session_key') }}
 )
 , with_location AS (
     {{ f1_asof_join(left='car_data', right=ref('stg_location'), on=['session_key', 'driver_number'], left_ts='telemetry_timestamp', right_ts='location_timestamp',
@@ -5114,29 +5255,120 @@ FROM with_lap
 
 **Reading it line by line**
 
-* **The `config` block:** `incremental` means the first run builds the table and later runs only add rows. On DuckDB the strategy is `append`. BigQuery has no `append`, so there it is `insert_overwrite` with a table **partitioned by `session_key`, one session per partition** (Chapter 10). The partition layout is chosen so that overwriting a partition can only ever replace the session being loaded.
+* **The `config` block:** `incremental` means the first run builds the table and later runs only add rows. On DuckDB the strategy is **`delete+insert` on `session_key`** (the first edition used `append`): the rows of any session in the new data are deleted and the new rows inserted, so a session is replaced, not duplicated. BigQuery has no such strategy here, so there it is `insert_overwrite` with a table **partitioned by `session_key`, one session per partition** (Chapter 10). The partition layout is chosen so that overwriting a partition can only ever replace the session being loaded. The `pre_hook`, `{{ scoped_pre_delete() }}`, runs first and deletes the scoped sessions from the table: `delete+insert` alone only replaces sessions that appear in the new rows, so without it a scoped session whose upstream rows had vanished would be left behind as stale data.
 * **`f1_asof_join(...)`:** for each car-data row, attach the latest location row for the same session and driver that is **not later** than the reading, then do the same for the lap. It is a macro because DuckDB has a native `ASOF JOIN` and BigQuery does not; Chapter 10 explains how it works on both. The `>=` in the original `ASOF` condition is what makes it "latest at or before".
-* **`session_key NOT IN (SELECT DISTINCT session_key FROM {{ this }})`:** on subsequent runs, skip any session already present. (The first edition used `NOT EXISTS`; `NOT IN` is fine here because `session_key` is never `NULL`.)
-* **`telemetry_only_sessions` (new):** an optional list of session keys. When set, only those sessions are loaded. Unset, every session with car data that is not yet in the table is loaded. See the box below.
+* **`telemetry_load_filter('session_key')`:** the row filter, from `macros/scope.sql` (below). With a scope set it keeps only the scoped sessions. With no scope, on an incremental run, it expands to `session_key NOT IN (SELECT DISTINCT session_key FROM {{ this }})`, so a session already present is skipped. (The first edition wrote that `NOT IN` inline; it is fine because `session_key` is never `NULL`.) On the first build it keeps everything.
+* **`session_keys` (third edition):** an optional list of session keys. When set, only those sessions are loaded, and they are replaced. Unset, every session with car data that is not yet in the table is loaded. See the box below.
 * **`location_age_ms`:** how stale the matched position is. A position older than two seconds is set to `NULL` instead of being trusted, because "latest known position" from 30 seconds ago is not a position.
 * **Column aliases (`x`, `y`, `z`):** location coordinates arrive from staging as `x_coordinate` and so on.
 * **`lap_number`:** the lap each reading belongs to, by an ASOF match to the latest lap start. Everything in Tasks 6 to 8 depends on it. A sample belongs to a lap only **while that lap is running**: from its start to start plus duration plus `telemetry_lap_tolerance_seconds`, and a lap with no duration gets `telemetry_max_unknown_lap_seconds`. Samples outside any lap keep a `NULL` lap number. Without that upper bound, cool-down laps and garage time were credited to the previous lap (the final lap of a race held minutes of slow driving, which produced 150 s delta traces and 93 km/h "top speeds"). The test `assert_telemetry_samples_within_lap_window` guards it.
 
-**Build only the sessions you need.** On the author's real data the first full build took **1 hour 25 minutes**. A job that long that fails at minute 84 loses everything, so the model accepts an opt-in list of sessions:
+**Build only the sessions you need.** On the author's real data the first full build took **1 hour 25 minutes**. A job that long that fails at minute 84 loses everything, so you tell dbt which sessions to build:
 
 ```bash
-dbt build --select fct_telemetry+ --vars '{telemetry_only_sessions: [9158]}'
+dbt build --select tag:telemetry_group --vars '{session_keys: [9158]}'
 ```
 
-Only those sessions are loaded, and every telemetry mart downstream (lap summary, distance trace, corners, delta trace) follows automatically, because they read from this table. Run it again with other session keys to add more. Because the model is incremental it skips sessions already in the table, so after a change to the lap-window logic you must rebuild with `--full-refresh`.
+Only those sessions are built, and every telemetry mart downstream (lap summary, distance trace, corners, delta trace) follows automatically and is scoped the same way. A scoped session is **replaced**: run the command again and you get the same rows, not duplicates. Run it with other session keys to add or refresh more. Airflow passes the key for you after each extraction (Chapter 8).
 
-Build it:
+Build it without a scope:
 
 ```bash
 dbt run --select fct_telemetry
 ```
 
-To rebuild from scratch (for example after changing the logic), use `--full-refresh`.
+With no scope the model behaves like the first edition: it loads every session that is not in the table yet and **skips the ones that are**. That has a consequence worth knowing: after you change the telemetry logic, a plain run does **not** refresh sessions already loaded. Re-run the sessions you care about with `session_keys`, or rebuild everything with `--full-refresh` (never together: see the pitfalls).
+
+**The session scope in detail (third edition).** Create **macros/scope.sql**. It is the single place that knows what the scope is:
+
+```jinja
+{#
+  SESSION SCOPE. Airflow tells dbt which sessions changed; dbt never guesses.
+
+    dbt build --vars '{session_keys: [9158, 9159]}'
+
+  * var `session_keys` unset or empty  -> no scope: everything behaves as before (manual runs, CI, dbt_scope=full). The
+                                          telemetry tables then load only the sessions they do not have yet.
+  * var `session_keys` set             -> the scoped staging views (stg_car_data, stg_location) expose only those sessions,
+                                          and every model in the telemetry group REPLACES those sessions (never appends).
+  * `telemetry_only_sessions` is the old name of the var and still works as an alias.
+
+  RULE: only stg_car_data and stg_location are scoped views. A `table` model must never read them, because a table rebuilt from a
+  scoped view silently loses every other session. ci/check_scoped_views.py enforces this on the manifest.
+#}
+
+{# Validated, sorted, de-duplicated list of integer session keys. Anything that is not a positive integer is an error:
+   the keys are pasted into SQL, so they are never coerced. `raw` none -> []. #}
+{% macro validate_session_keys(raw) %}
+  {%- set keys = [] -%}
+  {%- if raw is not none -%}
+    {%- if raw is string or raw is mapping or raw is not iterable -%}
+      {{ exceptions.raise_compiler_error("Session keys must be a list of integers, e.g. [9158, 9159]. Got: " ~ raw) }}
+    {%- endif -%}
+    {%- for k in raw -%}
+      {%- if not modules.re.fullmatch('[0-9]+', k | string) or (k | int) <= 0 -%}
+        {{ exceptions.raise_compiler_error("Invalid session key: " ~ k ~ ". Session keys are positive integers.") }}
+      {%- endif -%}
+      {%- do keys.append(k | int) -%}
+    {%- endfor -%}
+  {%- endif -%}
+  {{ return(keys | unique | sort | list) }}
+{% endmacro %}
+
+{# The scope of this run: var session_keys, else the legacy alias telemetry_only_sessions, else [] (no scope). #}
+{% macro scope_session_keys() %}
+  {%- set raw = var('session_keys', none) -%}
+  {%- if raw is none or (raw is not string and raw is not mapping and raw is iterable and raw | length == 0) -%}
+    {%- set raw = var('telemetry_only_sessions', none) -%}
+  {%- endif -%}
+  {{ return(validate_session_keys(raw)) }}
+{% endmacro %}
+
+{% macro is_scoped() %}{{ return(scope_session_keys() | length > 0) }}{% endmacro %}
+
+{# `col IN (...)` when a scope is set, otherwise the always-true `1 = 1`. Safe to AND into any WHERE. #}
+{% macro in_scope(col) -%}
+  {%- set keys = scope_session_keys() -%}
+  {%- if keys | length > 0 -%}{{ col }} IN ({{ keys | join(', ') }}){%- else -%}1 = 1{%- endif -%}
+{%- endmacro %}
+
+{#
+  The row filter of every telemetry-group model that reads PERSISTED or scoped telemetry:
+    scope set                     -> only the scoped sessions (the model REPLACES them: see scoped_pre_delete)
+    no scope, incremental run     -> only sessions this table does not hold yet
+    no scope, first build/refresh -> everything
+  --full-refresh together with a scope would rebuild the table from the scoped sessions ONLY and drop all the others: refused.
+#}
+{% macro telemetry_load_filter(col='session_key') -%}
+  {%- if execute and flags.FULL_REFRESH and is_scoped() -%}
+    {{ exceptions.raise_compiler_error("--full-refresh together with session_keys would rebuild the telemetry tables from the scoped sessions only and silently drop every other session. Unset session_keys for a full refresh, or drop --full-refresh for a scoped run.") }}
+  {%- endif -%}
+  {%- if is_scoped() -%}{{ in_scope(col) }}
+  {%- elif is_incremental() -%}{{ col }} NOT IN (SELECT DISTINCT session_key FROM {{ this }})
+  {%- else -%}1 = 1{%- endif -%}
+{%- endmacro %}
+
+{# pre_hook for the incremental telemetry-group models. delete+insert already replaces sessions present in the new rows; this also
+   clears a scoped session whose upstream rows have vanished, which delete+insert alone would leave behind as stale data.
+   Empty (no statement) unless the table exists and a scope is set. #}
+{% macro scoped_pre_delete() -%}
+  {%- if is_incremental() and is_scoped() -%}DELETE FROM {{ this }} WHERE {{ in_scope('session_key') }}{%- endif -%}
+{%- endmacro %}
+
+{# For generic tests on heavy tables: the relation to test, restricted to the scoped sessions when a scope is set. #}
+{% macro scoped_test_relation(model, scope_column) -%}
+  {%- if scope_column and is_scoped() -%}(SELECT * FROM {{ model }} WHERE {{ in_scope(scope_column) }}) f1_scoped
+  {%- else -%}{{ model }}{%- endif -%}
+{%- endmacro %}
+```
+
+* **`scope_session_keys()` and `validate_session_keys()`:** read `session_keys` (falling back to `telemetry_only_sessions`) and accept only a **list of positive integers**. The keys are pasted into SQL, so anything else, such as `"9158; DROP TABLE x"`, `9158.5` or `true`, is a compile error, never coerced.
+* **`in_scope(col)`:** returns `col IN (9158, 9159)`, or the always-true `1 = 1` with no scope, so it can be added to any `WHERE`. It is what the two staging views end with.
+* **`telemetry_load_filter(col)`:** the filter of the incremental models, with the three behaviours above. It also **refuses `--full-refresh` together with a scope**: that would rebuild the table from the scoped sessions only and silently drop every other session.
+* **`scoped_pre_delete()`:** the `pre_hook`; empty unless the table already exists and a scope is set.
+* **`scoped_test_relation()`:** used by the scope-aware generic tests (Chapter 6).
+
+> **The rule that keeps this safe.** Only `stg_car_data` and `stg_location` are scoped *views*, and **no `table` model may read them**: a table rebuilt from a scoped view silently loses every other session. The six telemetry models are incremental, so they persist all sessions. `ci/check_scoped_views.py` reads dbt's manifest and fails if a table reads scoped data (Chapter 11).
 
 #### **Task 4: The Export Macro**
 
@@ -5217,30 +5449,38 @@ output/telemetry_data/
 
 Any tool (DuckDB, Power BI via a connector, Spark) can read this folder. **Partition pruning** means `WHERE session_key = 9158` reads one folder, not the whole lake.
 
-**Re-loading a session whose raw files changed.** An incremental model skips any session already in the table, so if you re-extract a session (the first copy was taken while it was live, say) the table will not notice. A small macro removes sessions from both incremental telemetry tables so the next `dbt run` rebuilds them:
+**Re-loading a session whose raw files changed.** An incremental model skips any session already in the table, so if you re-extract a session (the first copy was taken while it was live, say) the table will not notice. Without a scope that is true, and the macro below removes sessions by hand so the next `dbt run` rebuilds them. (With the third edition's `session_keys` you rarely need it: a scoped run replaces the session by itself.) The macro now finds **every incremental model tagged `telemetry_group`** (six tables) through the dbt graph instead of a hard-coded pair:
 
 ```jinja
-{# Remove sessions from the incremental telemetry tables so the next `dbt run` rebuilds them from fresh raw files.
-   dbt run-operation delete_sessions_from_incrementals --args '{sessions: [9158, 9159]}' #}
-{% macro delete_sessions_from_incrementals(sessions) %}
-  {% if execute and sessions | length > 0 %}
-    {% set ids = sessions | map('int') | join(', ') %}
-    {% for model_name in ['fct_telemetry', 'fct_telemetry_distance_trace'] %}
-      {% set rel = adapter.get_relation(database=target.database, schema=target.schema, identifier=model_name) %}
-      {% if rel is not none %}
-        {% do run_query("DELETE FROM " ~ rel ~ " WHERE session_key IN (" ~ ids ~ ")") %}
-        {% do log("Deleted sessions " ~ ids ~ " from " ~ model_name, info=True) %}
-      {% endif %}
-    {% endfor %}
-    {# run-operation does not auto-commit DML: without this the DELETE is silently rolled back #}
-    {% do adapter.commit() %}
+{# Remove sessions from EVERY incremental model in the telemetry group (fct_telemetry, fct_telemetry_distance_trace,
+   fct_telemetry_lap_summary, dim_session_corners, fct_corner_performance, fct_lap_time_delta_trace), found through the dbt tag.
+   For manual use: a scoped run (--vars '{session_keys: [...]}') already replaces sessions by itself.
+     dbt run-operation delete_sessions_from_incrementals --args '{sessions: [9158, 9159]}'
+   Optional: --args '{sessions: [9158], tag: some_other_tag}' to target another group of incrementals. #}
+{% macro delete_sessions_from_incrementals(sessions, tag='telemetry_group') %}
+  {% if execute %}
+    {% set keys = validate_session_keys(sessions) %}
+    {% if keys | length > 0 %}
+      {% set ids = keys | join(', ') %}
+      {% for node in graph.nodes.values() | selectattr('resource_type', 'equalto', 'model') %}
+        {% if tag in node.tags and node.config.materialized == 'incremental' %}
+          {% set rel = adapter.get_relation(database=node.database, schema=node.schema, identifier=node.alias) %}
+          {% if rel is not none %}
+            {% do run_query("DELETE FROM " ~ rel ~ " WHERE session_key IN (" ~ ids ~ ")") %}
+            {% do log("Deleted sessions " ~ ids ~ " from " ~ node.name, info=True) %}
+          {% endif %}
+        {% endif %}
+      {% endfor %}
+      {# run-operation does not auto-commit DML: without this the DELETE is silently rolled back #}
+      {% do adapter.commit() %}
+    {% endif %}
   {% endif %}
 {% endmacro %}
 ```
 
 ```bash
 dbt run-operation delete_sessions_from_incrementals --args '{sessions: [9158]}'
-dbt run --select fct_telemetry fct_telemetry_distance_trace
+dbt run --select tag:telemetry_group
 ```
 
 > **The `adapter.commit()` line is there because of a bug.** The first version of this macro logged "Deleted sessions ..." and the row count never changed: `run-operation` does **not** auto-commit DML, so the `DELETE` was rolled back silently. A log line saying "deleted" is not evidence of deletion; the test that found this counted the rows before and after.
@@ -5274,15 +5514,21 @@ Telemetry is recorded against time, but an engineer asks "where on the lap does 
   session's typical lap length (the median of complete-lap totals). Incomplete laps (cut-off in/out laps, red-flagged
   laps) keep their raw distance and are marked is_complete_lap = FALSE; do not compare them point by point.
   Laps through the pit lane follow a different path but are still rescaled; filter on is_representative_lap upstream.
-  Incremental by session, like fct_telemetry.
+  Incremental by session, like fct_telemetry: a scoped run (var session_keys) replaces those sessions, an unscoped run loads only missing ones.
+
+  Unavailable readings are masked, not dropped (the distance axis still needs every sample): a throttle above 100 means "no data" (the value 104
+  appears in the raw feed), and a run of var stale_telemetry_min_samples or more consecutive samples with the same non-zero speed and gear is a
+  frozen reading, not driving (on real data a qualifying lap started with 3 s of identical 168 km/h, gear 4, throttle 104). The channels of those
+  samples are NULL in the output, so a chart shows a gap instead of a flat line and a minimum speed is not taken from them.
 #}
 {{ config(
     materialized='incremental',
-    incremental_strategy=var('bq_incremental_strategy', 'insert_overwrite') if target.type == 'bigquery' else 'append',
-    unique_key=['session_key', 'driver_number', 'lap_number', 'distance_bin'] if (target.type == 'bigquery' and var('bq_incremental_strategy', 'insert_overwrite') == 'merge') else none,
+    incremental_strategy=var('bq_incremental_strategy', 'insert_overwrite') if target.type == 'bigquery' else 'delete+insert',
+    unique_key=(['session_key', 'driver_number', 'lap_number', 'distance_bin'] if var('bq_incremental_strategy', 'insert_overwrite') == 'merge' else none) if target.type == 'bigquery' else 'session_key',
     partition_by=({'field': 'session_key', 'data_type': 'int64',
                    'range': {'start': var('bq_session_key_start'), 'end': var('bq_session_key_end'), 'interval': 1}}
-                  if target.type == 'bigquery' else none)
+                  if target.type == 'bigquery' else none),
+    pre_hook="{{ scoped_pre_delete() }}"
 ) }}
 
 WITH base AS (
@@ -5291,9 +5537,24 @@ WITH base AS (
     LEFT JOIN {{ ref('stg_laps') }} l
         ON t.session_key = l.session_key AND t.driver_number = l.driver_number AND t.lap_number = l.lap_number
     WHERE t.lap_number IS NOT NULL
-    {% if is_incremental() %}
-      AND t.session_key NOT IN (SELECT DISTINCT session_key FROM {{ this }})
-    {% endif %}
+      AND {{ telemetry_load_filter('t.session_key') }}
+),
+changes AS (
+    SELECT
+        *,
+        CASE WHEN speed = LAG(speed) OVER w AND gear = LAG(gear) OVER w THEN 0 ELSE 1 END AS is_change
+    FROM base
+    WINDOW w AS (PARTITION BY session_key, driver_number, lap_number ORDER BY telemetry_timestamp)
+),
+runs AS (
+    SELECT
+        *,
+        SUM(is_change) OVER (PARTITION BY session_key, driver_number, lap_number ORDER BY telemetry_timestamp ROWS UNBOUNDED PRECEDING) AS run_id
+    FROM changes
+),
+flagged AS (
+    SELECT *, (run_len >= {{ var('stale_telemetry_min_samples') }} AND speed > 0) AS is_stale
+    FROM (SELECT *, COUNT(*) OVER (PARTITION BY session_key, driver_number, lap_number, run_id) AS run_len FROM runs) r
 ),
 stepped AS (
     SELECT
@@ -5302,7 +5563,7 @@ stepped AS (
         -- window MIN/MAX run over integer microseconds, not TIMESTAMPs (some engines mishandle windowed MIN/MAX of TIMESTAMP)
         MIN({{ f1_epoch_us('telemetry_timestamp') }}) OVER (PARTITION BY session_key, driver_number, lap_number) AS lap_first_us,
         MAX({{ f1_epoch_us('telemetry_timestamp') }}) OVER (PARTITION BY session_key, driver_number, lap_number) AS lap_last_us
-    FROM base
+    FROM flagged
     WINDOW w AS (PARTITION BY session_key, driver_number, lap_number ORDER BY telemetry_timestamp)
 ),
 integrated AS (
@@ -5355,11 +5616,11 @@ SELECT
     distance_bin,
     distance_bin * {{ var('distance_bin_metres') }} AS distance_m,
     MIN(lap_elapsed_seconds) AS elapsed_seconds,
-    AVG(speed) AS avg_speed_kph,
-    MIN(speed) AS min_speed_kph,
-    AVG(throttle) AS avg_throttle,
-    MAX(brake) AS max_brake,
-    {{ f1_cast('ROUND(AVG(gear))', 'int') }} AS gear,
+    AVG(CASE WHEN NOT is_stale THEN speed END) AS avg_speed_kph,
+    MIN(CASE WHEN NOT is_stale THEN speed END) AS min_speed_kph,
+    AVG(CASE WHEN NOT is_stale AND throttle <= 100 THEN throttle END) AS avg_throttle,
+    MAX(CASE WHEN NOT is_stale THEN brake END) AS max_brake,
+    {{ f1_cast('ROUND(AVG(CASE WHEN NOT is_stale THEN gear END))', 'int') }} AS gear,
     AVG(x) AS x, AVG(y) AS y,
     MIN(is_complete_lap) AS is_complete_lap,
     MIN(track_length_m) AS track_length_m
@@ -5373,6 +5634,8 @@ GROUP BY session_key, meeting_key, driver_number, lap_number, distance_bin
 * **Normalisation:** the model finds the session's typical lap length (the median total distance of the *complete* laps, those where telemetry covers at least 98% of the lap time) and rescales every complete lap to it. Incomplete laps (cut-off in/out laps) keep their raw distance and are marked `is_complete_lap = false`; do not compare those point by point. This step was found necessary by testing: without it, a corner's measured apex speed on the synthetic data averaged 142 km/h when the true value was 90, because the corners of slower laps had slid along the lap.
 * **Window functions over integer microseconds, not timestamps:** the first and last sample times are taken with `epoch_us(...)` (an integer). Some engines mishandle windowed `MIN`/`MAX` over a `TIMESTAMP` column (the BigQuery emulator returned a wrong value), and integers are the same everywhere.
 * **The bin is computed in its own CTE.** Selecting an expression of `lap_distance_m` while grouping by an *alias* of a different expression is accepted by DuckDB and rejected by BigQuery. It is a genuine portability bug found when the model was ported.
+* **Unavailable and frozen readings are masked, not dropped (third edition's code, which also brings in earlier repository fixes).** The distance axis needs every sample, so bad readings stay as rows but their channels become `NULL`. A throttle above 100 means "no data" (the raw feed reports 104 for it), and a run of `stale_telemetry_min_samples` or more consecutive samples with the same non-zero speed **and** gear is a frozen reading, not driving: on the author's real data a qualifying lap started with 3 s of identical 168 km/h, gear 4, throttle 104. The `changes`, `runs` and `flagged` CTEs find those runs, and the averages use `CASE WHEN NOT is_stale ...`, so a chart shows a gap instead of a flat line and a minimum speed is never taken from them. Two tests guard this: `assert_unavailable_telemetry_is_masked` and, on the generated data only, `assert_frozen_telemetry_is_masked` (Chapter 6).
+* **Incremental, scoped by session:** like `fct_telemetry`, it is a `delete+insert` model on `session_key`, filtered by `telemetry_load_filter('t.session_key')` and cleaned by the same `pre_hook`. A scoped run reads only the scoped sessions' telemetry, so the normalisation above (the session's median lap length) is computed from that session alone, which is exactly what it needs.
 * **`ROUND` before the floor:** a distance sum that lands exactly on a bin edge could flip to the neighbouring bin depending on floating-point rounding order. Rounding to six decimals first makes a full build and an incremental refill produce identical bins.
 
 #### **Task 7: Per-Lap Telemetry KPIs and the Delta Trace**
@@ -5380,13 +5643,26 @@ GROUP BY session_key, meeting_key, driver_number, lap_number, distance_bin
 **Step 1: A one-line summary of every lap.** `fct_telemetry_lap_summary` reduces each lap to the numbers an engineer looks at first: top and minimum speed, how much of the lap was full throttle or braking, the number of **braking zones** (a zone starts when the brake goes from off to on), DRS-open share and gear usage.
 
 ```sql
-{# Per driver per lap telemetry KPIs: top/min speed, throttle/brake application, gear usage, DRS and braking zones. #}
+{# Per driver per lap telemetry KPIs: top/min speed, throttle/brake application, gear usage, DRS and braking zones.
+   INCREMENTAL by session (was a table that rescanned every telemetry row on each build): a scoped run replaces those sessions, an unscoped run
+   loads only sessions not yet here. #}
+{{ config(
+    materialized='incremental',
+    incremental_strategy=var('bq_incremental_strategy', 'insert_overwrite') if target.type == 'bigquery' else 'delete+insert',
+    unique_key=(['session_key', 'driver_number', 'lap_number'] if var('bq_incremental_strategy', 'insert_overwrite') == 'merge' else none) if target.type == 'bigquery' else 'session_key',
+    partition_by=({'field': 'session_key', 'data_type': 'int64',
+                   'range': {'start': var('bq_session_key_start'), 'end': var('bq_session_key_end'), 'interval': 1}}
+                  if target.type == 'bigquery' else none),
+    pre_hook="{{ scoped_pre_delete() }}"
+) }}
+
 WITH samples AS (
     SELECT
         *,
         LAG(brake) OVER (PARTITION BY session_key, driver_number, lap_number ORDER BY telemetry_timestamp) AS prev_brake
     FROM {{ ref('fct_telemetry') }}
     WHERE lap_number IS NOT NULL
+      AND {{ telemetry_load_filter('session_key') }}
 )
 SELECT
     session_key, meeting_key, driver_number, lap_number,
@@ -5394,7 +5670,8 @@ SELECT
     MAX(speed) AS top_speed_kph,
     MIN(speed) AS min_speed_kph,
     AVG(speed) AS avg_speed_kph,
-    AVG({{ f1_cast('(throttle >= 99)', 'int') }}) AS full_throttle_fraction,
+    -- a throttle above 100 (the raw feed's 104) means 'no data': it must not count as full throttle
+    AVG(CASE WHEN throttle <= 100 THEN {{ f1_cast('(throttle >= 99)', 'int') }} END) AS full_throttle_fraction,
     AVG({{ f1_cast('(brake > 0)', 'int') }}) AS braking_fraction,
     -- a braking zone starts when brake goes from released (0) to applied (>0)
     COUNT(CASE WHEN brake > 0 AND COALESCE(prev_brake, 0) = 0 THEN 1 END) AS braking_zone_count,
@@ -5411,7 +5688,18 @@ GROUP BY session_key, meeting_key, driver_number, lap_number
 ```sql
 {# Each driver's best lap vs the session's fastest lap, point by point along the lap (the engineer's "delta trace").
    time_delta_seconds > 0 means the driver is behind the reference at that distance. Only drivers with extracted
-   telemetry appear (telemetry is the heaviest endpoint and may be extracted for fewer drivers/sessions). #}
+   telemetry appear (telemetry is the heaviest endpoint and may be extracted for fewer drivers/sessions).
+   INCREMENTAL by session: a scoped run replaces those sessions, an unscoped run loads only sessions not yet here. #}
+{{ config(
+    materialized='incremental',
+    incremental_strategy=var('bq_incremental_strategy', 'insert_overwrite') if target.type == 'bigquery' else 'delete+insert',
+    unique_key=(['session_key', 'driver_number', 'lap_number', 'distance_bin'] if var('bq_incremental_strategy', 'insert_overwrite') == 'merge' else none) if target.type == 'bigquery' else 'session_key',
+    partition_by=({'field': 'session_key', 'data_type': 'int64',
+                   'range': {'start': var('bq_session_key_start'), 'end': var('bq_session_key_end'), 'interval': 1}}
+                  if target.type == 'bigquery' else none),
+    pre_hook="{{ scoped_pre_delete() }}"
+) }}
+
 WITH best AS (
     SELECT session_key, driver_number, lap_number, is_overall_fastest_lap FROM {{ ref('fct_fastest_laps') }}
 ),
@@ -5429,7 +5717,10 @@ JOIN reference r ON d.session_key = r.session_key
 JOIN {{ ref('fct_telemetry_distance_trace') }} ref
     ON ref.session_key = r.session_key AND ref.driver_number = r.ref_driver_number
     AND ref.lap_number = r.ref_lap_number AND ref.distance_bin = d.distance_bin
+WHERE {{ telemetry_load_filter('d.session_key') }}
 ```
+
+> **Both models are incremental by session (third edition).** `fct_telemetry_lap_summary` used to be a table that rescanned every telemetry row on each build. Both now read the persisted telemetry (and the distance trace) filtered by `telemetry_load_filter`: a scoped run replaces those sessions, an unscoped run loads only sessions not yet in the table. `fct_telemetry_lap_summary` also stopped counting a throttle above 100 ("no data") as full throttle.
 
 > **It only covers drivers with telemetry.** Telemetry is the heaviest endpoint and may be extracted for fewer drivers or sessions than laps, and this trace appears only where a driver's best lap has telemetry.
 
@@ -5450,13 +5741,26 @@ The API publishes **no corner data**: no turn numbers, names or positions. So co
   between sessions (a chicane may be one corner in one session and two in another). Apexes within
   var corner_min_separation_bins of the lap start/end are not detected (their detection windows would be cut off). turn_direction uses the raw x/y
   plane convention and may be mirrored relative to the real circuit. Speed class uses the reference apex speed.
+  INCREMENTAL by session: a scoped run replaces those sessions' corners, an unscoped run adds only sessions not yet here. Corners are
+  derived from the session's fastest lap, which is rebuilt on every run, so re-run a session with session_keys after its laps change.
 #}
+{{ config(
+    materialized='incremental',
+    incremental_strategy=var('bq_incremental_strategy', 'insert_overwrite') if target.type == 'bigquery' else 'delete+insert',
+    unique_key=(['session_key', 'corner_number'] if var('bq_incremental_strategy', 'insert_overwrite') == 'merge' else none) if target.type == 'bigquery' else 'session_key',
+    partition_by=({'field': 'session_key', 'data_type': 'int64',
+                   'range': {'start': var('bq_session_key_start'), 'end': var('bq_session_key_end'), 'interval': 1}}
+                  if target.type == 'bigquery' else none),
+    pre_hook="{{ scoped_pre_delete() }}"
+) }}
+
 WITH ref AS (
     SELECT session_key, driver_number, lap_number
     FROM (
         SELECT t.session_key, t.driver_number, t.lap_number,
                ROW_NUMBER() OVER (PARTITION BY t.session_key ORDER BY f.fastest_lap_time_seconds) AS rn
-        FROM (SELECT DISTINCT session_key, driver_number, lap_number FROM {{ ref('fct_telemetry_distance_trace') }}) t
+        FROM (SELECT DISTINCT session_key, driver_number, lap_number FROM {{ ref('fct_telemetry_distance_trace') }}
+              WHERE {{ telemetry_load_filter('session_key') }}) t
         JOIN {{ ref('fct_fastest_laps') }} f
             ON t.session_key = f.session_key AND t.driver_number = f.driver_number AND t.lap_number = f.lap_number
     ) ranked
@@ -5505,11 +5809,34 @@ bounds AS (
         a.distance_bin + {{ (var('corner_exit_distance_m') / var('distance_bin_metres')) | int }} AS exit_bin
     FROM apexes a
 ),
+-- The distance axis is sparse where the car is fast: car data arrives about 4 times a second, so at 300 km/h a 10 m bin often has no row at all.
+-- An exact-bin join for the entry and exit points therefore found nothing on fast corners and the turn angle was NULL. Use the NEAREST bin that has a
+-- position, within var corner_geometry_search_bins.
+entry_pts AS (
+    SELECT session_key, corner_number, x AS entry_x, y AS entry_y
+    FROM (
+        SELECT b.session_key, b.corner_number, e.x, e.y,
+               ROW_NUMBER() OVER (PARTITION BY b.session_key, b.corner_number ORDER BY ABS(e.distance_bin - b.entry_bin)) AS rn
+        FROM bounds b
+        JOIN trace e ON b.session_key = e.session_key AND ABS(e.distance_bin - b.entry_bin) <= {{ var('corner_geometry_search_bins') }}
+        WHERE e.x IS NOT NULL AND e.y IS NOT NULL
+    ) ranked WHERE rn = 1
+),
+exit_pts AS (
+    SELECT session_key, corner_number, x AS exit_x, y AS exit_y
+    FROM (
+        SELECT b.session_key, b.corner_number, e.x, e.y,
+               ROW_NUMBER() OVER (PARTITION BY b.session_key, b.corner_number ORDER BY ABS(e.distance_bin - b.exit_bin)) AS rn
+        FROM bounds b
+        JOIN trace e ON b.session_key = e.session_key AND ABS(e.distance_bin - b.exit_bin) <= {{ var('corner_geometry_search_bins') }}
+        WHERE e.x IS NOT NULL AND e.y IS NOT NULL
+    ) ranked WHERE rn = 1
+),
 geom AS (
-    SELECT b.*, e.x AS entry_x, e.y AS entry_y, x_.x AS exit_x, x_.y AS exit_y
+    SELECT b.*, en.entry_x, en.entry_y, ex.exit_x, ex.exit_y
     FROM bounds b
-    LEFT JOIN trace e ON b.session_key = e.session_key AND e.distance_bin = b.entry_bin
-    LEFT JOIN trace x_ ON b.session_key = x_.session_key AND x_.distance_bin = b.exit_bin
+    LEFT JOIN entry_pts en ON b.session_key = en.session_key AND b.corner_number = en.corner_number
+    LEFT JOIN exit_pts ex ON b.session_key = ex.session_key AND b.corner_number = ex.corner_number
 ),
 turns AS (
     -- radians to degrees by hand: BigQuery has no DEGREES function
@@ -5530,7 +5857,9 @@ SELECT
     entry_bin, exit_bin,
     avg_speed_kph AS reference_apex_speed_kph,
     CASE WHEN raw_turn > 180 THEN raw_turn - 360 WHEN raw_turn < -180 THEN raw_turn + 360 ELSE raw_turn END AS turn_angle_deg,
-    CASE WHEN (CASE WHEN raw_turn > 180 THEN raw_turn - 360 WHEN raw_turn < -180 THEN raw_turn + 360 ELSE raw_turn END) > 0
+    -- NULL when the angle could not be measured: this used to fall through to 'RIGHT', which invented a direction for every corner without an angle
+    CASE WHEN raw_turn IS NULL THEN NULL
+         WHEN (CASE WHEN raw_turn > 180 THEN raw_turn - 360 WHEN raw_turn < -180 THEN raw_turn + 360 ELSE raw_turn END) > 0
          THEN 'LEFT' ELSE 'RIGHT' END AS turn_direction,
     CASE WHEN avg_speed_kph < {{ var('corner_slow_kph') }} THEN 'SLOW'
          WHEN avg_speed_kph >= {{ var('corner_fast_kph') }} THEN 'FAST' ELSE 'MEDIUM' END AS speed_class,
@@ -5542,27 +5871,43 @@ FROM angled
 **Step 2: Measure every driver through every corner.** `fct_corner_performance` finds, for every driver and lap, the **entry speed, apex speed and exit speed**, the distance from the first brake application to the apex, and the distance from the apex to full throttle.
 
 ```sql
-{# Per driver per lap per DETECTED corner (see dim_session_corners for what "corner" means here). #}
+{# Per driver per lap per DETECTED corner (see dim_session_corners for what "corner" means here).
+   INCREMENTAL by session: a scoped run replaces those sessions, an unscoped run loads only sessions not yet here. #}
+{{ config(
+    materialized='incremental',
+    incremental_strategy=var('bq_incremental_strategy', 'insert_overwrite') if target.type == 'bigquery' else 'delete+insert',
+    unique_key=(['session_key', 'driver_number', 'lap_number', 'corner_number'] if var('bq_incremental_strategy', 'insert_overwrite') == 'merge' else none) if target.type == 'bigquery' else 'session_key',
+    partition_by=({'field': 'session_key', 'data_type': 'int64',
+                   'range': {'start': var('bq_session_key_start'), 'end': var('bq_session_key_end'), 'interval': 1}}
+                  if target.type == 'bigquery' else none),
+    pre_hook="{{ scoped_pre_delete() }}"
+) }}
+
 WITH j AS (
     SELECT
         t.session_key, t.driver_number, t.lap_number, c.corner_number,
         t.distance_bin, t.distance_m, t.avg_speed_kph, t.min_speed_kph, t.avg_throttle, t.max_brake, t.elapsed_seconds,
+        t.is_complete_lap,
         c.entry_bin, c.apex_bin, c.exit_bin, c.apex_distance_m
     FROM {{ ref('fct_telemetry_distance_trace') }} t
     JOIN {{ ref('dim_session_corners') }} c
         ON t.session_key = c.session_key
-        AND t.distance_bin BETWEEN c.entry_bin - {{ (var('corner_brake_lookback_m') / var('distance_bin_metres')) | int }} AND c.exit_bin
+        AND t.distance_bin BETWEEN c.entry_bin - {{ (var('corner_brake_lookback_m') / var('distance_bin_metres')) | int }} AND c.exit_bin + 2
+    WHERE {{ telemetry_load_filter('t.session_key') }}
 ),
 agg AS (
     SELECT
         session_key, driver_number, lap_number, corner_number,
         MIN(apex_distance_m) AS apex_distance_m,
-        MIN(CASE WHEN distance_bin = entry_bin THEN avg_speed_kph END) AS entry_speed_kph,
+        -- entry and exit use the bins within 2 of the entry/exit point: on a fast section an exact bin often has no sample (see dim_session_corners)
+        AVG(CASE WHEN distance_bin BETWEEN entry_bin - 2 AND entry_bin + 2 THEN avg_speed_kph END) AS entry_speed_kph,
         MIN(CASE WHEN distance_bin BETWEEN apex_bin - 3 AND apex_bin + 3 THEN min_speed_kph END) AS apex_speed_kph,
-        MIN(CASE WHEN distance_bin = exit_bin THEN avg_speed_kph END) AS exit_speed_kph,
+        AVG(CASE WHEN distance_bin BETWEEN exit_bin - 2 AND exit_bin + 2 THEN avg_speed_kph END) AS exit_speed_kph,
         MIN(CASE WHEN max_brake > 0 AND distance_bin <= apex_bin THEN distance_m END) AS brake_start_distance_m,
         MIN(CASE WHEN avg_throttle >= 99 AND distance_bin > apex_bin THEN distance_m END) AS full_throttle_distance_m,
-        MIN(CASE WHEN distance_bin = exit_bin THEN elapsed_seconds END) - MIN(CASE WHEN distance_bin = entry_bin THEN elapsed_seconds END) AS corner_time_seconds
+        MIN(CASE WHEN distance_bin BETWEEN exit_bin - 2 AND exit_bin + 2 THEN elapsed_seconds END)
+            - MIN(CASE WHEN distance_bin BETWEEN entry_bin - 2 AND entry_bin + 2 THEN elapsed_seconds END) AS corner_time_seconds,
+        MIN(is_complete_lap) AS is_complete_lap
     FROM j
     GROUP BY session_key, driver_number, lap_number, corner_number
 )
@@ -5570,12 +5915,16 @@ SELECT
     a.*,
     a.apex_distance_m - a.brake_start_distance_m AS brake_to_apex_distance_m,
     a.full_throttle_distance_m - a.apex_distance_m AS apex_to_full_throttle_distance_m,
-    a.apex_speed_kph - MAX(a.apex_speed_kph) OVER (PARTITION BY a.session_key, a.corner_number) AS apex_speed_delta_to_session_best_kph,
+    a.apex_speed_kph - MAX(CASE WHEN a.is_complete_lap THEN a.apex_speed_kph END) OVER (PARTITION BY a.session_key, a.corner_number) AS apex_speed_delta_to_session_best_kph,
     l.is_representative_lap
 FROM agg a
 LEFT JOIN {{ ref('int_lap_context') }} l
     ON a.session_key = l.session_key AND a.driver_number = l.driver_number AND a.lap_number = l.lap_number
 ```
+
+> **Corner geometry and direction (the repository's fixes, now in the book).** The distance axis is sparse where the car is fast: car data arrives about four times a second, so at 300 km/h a 10 m bin often has no row at all. An exact-bin join for a corner's entry and exit points therefore found nothing on fast corners and the turn angle was `NULL`. `entry_pts` and `exit_pts` now take the **nearest bin that has a position**, within `corner_geometry_search_bins`. A corner whose angle still cannot be measured now has a `NULL` direction: the first version reported `RIGHT` for every corner without an angle, inventing a direction (`assert_corner_direction_needs_angle` guards this). In `fct_corner_performance`, entry, exit and corner time use the bins **within two of** the entry and exit points for the same sparseness reason, and `is_complete_lap` limits the session-best comparison to complete laps.
+
+> **Both corner models are incremental by session (third edition)**, like the rest of the telemetry group. A corner is derived from the session's fastest lap, which is rebuilt on every run, so re-run a session with `session_keys` after its laps change.
 
 > **What "corner" means here.** `corner_number` is *the Nth detected slowing zone*, **not** the official turn number, and it can differ between sessions (a chicane may be one corner in one session and two in another). `turn_direction` uses the raw x/y convention and may be mirrored. Apexes within `corner_min_separation_bins` of the lap start or end are not detected, because their detection windows would be cut off. The thresholds were tuned on synthetic laps, so expect to retune them on real circuits.
 
@@ -5594,7 +5943,7 @@ LEFT JOIN {{ ref('int_lap_context') }} l
 * **The Solution:** `mkdir -p output/telemetry_data` before the first export.
 
 * **The Problem:** `dbt run` finishes in seconds and the table is empty after adding new sessions.
-* **Why it Happens:** an incremental model with `NOT EXISTS (session_key)` skips sessions already present, so you see nothing new unless the session is genuinely new.
+* **Why it Happens:** with no scope, an incremental model skips sessions already present (`session_key NOT IN (SELECT ... FROM this)`), so you see nothing new unless the session is genuinely new.
 * **The Solution:** add the new session's staging data first, or use `--full-refresh` when the logic changes.
 
 * **The Problem:** the export prints "Skipping export".
@@ -5603,7 +5952,7 @@ LEFT JOIN {{ ref('int_lap_context') }} l
 
 * **The Problem (second edition, hit on the author's real data):** the first full build of `fct_telemetry` runs for **1 hour 25 minutes**, and the tests that follow it error out.
 * **Why it Happens:** it joins every car-data reading to the latest location and lap in one go, spilling heavily to disk on a single thread, and if `temp_directory` is configured under `settings` the spill then triggers the error described in Chapter 5. The model is correct; the job is simply too big for one transaction.
-* **The Solution:** build only the sessions you need with `telemetry_only_sessions` (Task 3), and keep any `temp_directory` under `config_options`.
+* **The Solution:** build only the sessions you need with `session_keys` (Task 3), and keep any `temp_directory` under `config_options`.
 
 * **The Problem (second edition, found by the tests):** corner apex speeds vary wildly from lap to lap even though every lap uses the same corners.
 * **Why it Happens:** distance integrated from speed drifts, so a slower lap's corners land at different distances and the corner window misses the true minimum.
@@ -5617,6 +5966,18 @@ LEFT JOIN {{ ref('int_lap_context') }} l
 * **Why it Happens:** the test checks that, on each session's *reference* lap, an apex is slower than its entry and exit points. It can warn for several reasons: corners packed so closely that one corner's entry or exit point lies inside its neighbour, a telemetry dropout, a lock-up or slide on the reference lap, or a detection threshold that needs retuning. A single warning cannot tell them apart. Note also that the test looks at one row per session and corner on the *reference lap*, not at every corner measurement, so the denominator for "how rare is one warning" is the number of session-corner pairs, much smaller than the number of measured corners.
 * **The Solution:** the test is a **warning**, not an error, for exactly that reason. Inspect the session's corner and its neighbours in `dim_session_corners` and `fct_corner_performance` before retuning a threshold. `docs/ISSUES_CHECKLIST.md` (item D11) records that the detector finds speed minima and braking zones rather than official turns.
 
+* **The Problem (third edition, hit while verifying it):** a telemetry test fails (`assert_frozen_telemetry_is_masked` returned 24 rows) although the model code is right, and the three models downstream of it are skipped.
+* **Why it Happens:** the database file already held telemetry from an **older** build, and an unscoped incremental run keeps sessions it already has. The raw fixtures had not been regenerated either, because `make` was not installed on that machine: the line printed `make: command not found`, but the next lines of the pasted block still ran against the old files. The old rows were stale, not wrong code. After the data and database were regenerated the test passed on both the original and the changed code, which is how the two causes were told apart.
+* **The Solution:** delete the database (`rm -rf .ci_raw` on the generated dataset), regenerate the data, rebuild. For a real warehouse, re-run the affected sessions with `session_keys` instead. Lesson: when a test fails after you changed incremental logic, rebuild from clean state *before* debugging the code, and compare against the original commit in a separate checkout (`git worktree`) rather than guessing.
+
+* **The Problem (third edition):** `Compilation Error ... --full-refresh together with session_keys would rebuild the telemetry tables from the scoped sessions only`.
+* **Why it Happens:** `--full-refresh` drops and rebuilds an incremental table. With a scope set it would be rebuilt from the scoped sessions alone and every other session would disappear. `telemetry_load_filter` refuses the combination on purpose.
+* **The Solution:** use one or the other. To refresh a session, drop `--full-refresh` and pass `session_keys`; to rebuild everything, unset the scope. Airflow's `dbt_full_refresh` parameter never sets both (Chapter 8).
+
+* **The Problem (third edition):** a scoped run for a session **deletes** its rows and loads none.
+* **Why it Happens:** the session's raw car data or location files no longer exist (deleted, or the extraction returned nothing), so the pre-delete cleared the old rows and there was nothing to insert. That is the replace-by-session rule working: the table now matches the raw data. The equivalence check in Chapter 11 tests this case on purpose.
+* **The Solution:** restore or re-extract the raw files and run the session again. Keep a copy of the warehouse before the first scoped runs against real data.
+
 * **The Problem (second edition, found by the tests):** after `delete_sessions_from_incrementals` the telemetry row count is unchanged.
 * **Why it Happens:** `dbt run-operation` does not auto-commit, so the `DELETE` was silently rolled back.
 * **The Solution:** `{% do adapter.commit() %}` at the end of the macro (Task 4).
@@ -5627,16 +5988,20 @@ LEFT JOIN {{ ref('int_lap_context') }} l
 
 ### **Chapter Overview**
 
-So far you trigger Airflow, then separately trigger dbt by hand. In this chapter the DAG calls dbt itself, once extraction has finished. **[CODE FINAL, RUN NOT CONFIRMED]** The task and its container setup are in the repository and the DAG was parsed with real Airflow, but **nothing here has been run inside Docker**: the build logs contain no successful run of the dbt task, and the second edition's test environment had no Docker.
+So far you trigger Airflow, then separately trigger dbt by hand. In this chapter the DAG calls dbt itself, once extraction has finished, and (third edition) tells dbt **which sessions changed**, so each run builds only its own sessions. **[VERIFIED]** on the author's real data in Docker: a `latest` run extracted 17 Parquet files (17 written, 1 empty, the `starting_grid` feed for that session), logged `mode=scoped keys=[11420]`, ran a single `dbt build --target container ... --vars '{"enable_radio_transcripts":true,"session_keys":[11420]}'` (140 nodes: 137 passed, 3 pre-existing data-quality warnings, 0 errors), and left every other session's row count in the six telemetry tables identical to a backup taken beforehand. The earlier second-edition statement that nothing had run in Docker no longer applies. The multi-chunk plan, `dbt_scope=full` and the full-refresh guard are covered by unit tests only, not by a live run.
 
 > **What changed from the first edition.** In the first edition this chapter was a to-do list ("add these mounts, write a container profile, change the paths"). All of that is now **in the repository**: the compose file mounts the dbt project, `profiles.yml` has a `container` target, and the paths that were hard-coded to `F:/` are environment variables. The task is also simpler: it runs `dbt build`, and the telemetry **export** is no longer scoped by the DAG; run it separately with the `run-operation` from Chapter 7.
+>
+> **What changed in the third edition.** The task used to run one `dbt build` over the whole project after any extraction. It now builds a **scope** from what the run actually wrote, plans the dbt commands as argument lists, validates the session keys, logs the exact command, and waits for transcription. The first edition's pitch, "dbt decides how to transform", is unchanged: Airflow only decides *which sessions*.
 
 **Concepts introduced in this chapter**
 
 * **Orchestration boundary:** Airflow decides *when and what*, dbt decides *how to transform*. Airflow should call dbt, not reimplement it.
-* **`subprocess`:** running a command-line program from Python.
-* **`shlex.quote`:** safely escapes a value before placing it in a shell command, preventing injection.
-* **Task dependency (`>>`):** the dbt task waits for `verify_and_load`.
+* **Scope:** the list of sessions a run changed, passed to dbt as the variable `session_keys`. The run tells dbt what changed; dbt never guesses.
+* **Argument list instead of a shell string:** the runner hands `subprocess.run` a **list** (`["dbt", "build", "--target", ...]`) with `shell=False`. There is no shell to inject into, so no quoting is needed. This replaces the first edition's `shlex.quote`.
+* **Chunking:** a run over many sessions builds the telemetry group a few sessions at a time (`dbt_chunk_size`, default 10), so one failure loses one chunk.
+* **Trigger rule (`none_failed`):** by default a task is skipped if any upstream task was skipped. The dbt task must still run when transcription is switched off and its mapped tasks are all skipped, so it uses `TriggerRule.NONE_FAILED`: it runs unless an upstream task *failed*.
+* **Task dependency (`>>`):** the dbt task waits for `verify_and_load` **and** for the radio transcription task.
 
 ### **Step by Step Procedures**
 
@@ -5650,55 +6015,333 @@ The task runs `dbt` **inside the Airflow container**, so the container needs dbt
 
 > **Why this matters.** A wrong path or a missing install is still the most likely reason the dbt task fails on its first real run. That is an inference from the files, not an error recorded in a log.
 
-#### **Task 2: The `run_dbt_build` Task**
+#### **Task 2: The `run_dbt_build` Task (rewritten in the third edition)**
 
-The task is already part of the DAG you pasted in Chapter 3 (it is skipped unless you tick `run_dbt_build` in the trigger form). Here it is on its own:
+The task is part of the DAG you pasted in Chapter 3 (it is skipped unless you tick `run_dbt_build` in the trigger form). It is now a thin layer over two small, Airflow-free modules that you create in the next two steps, so the DAG file must be able to import **modules/dbt_scope.py**: create Steps 2 and 3 before you let the scheduler parse the Chapter 3 DAG. Here is the task on its own:
 
 ```python
     # ==========================================
-    # OPTIONAL: RUN DBT AFTER EXTRACTION
+    # OPTIONAL: RUN DBT AFTER EXTRACTION (scoped to what this run changed)
     # ==========================================
-    @task
-    def run_dbt_build(load_result, **context):
-        if not context["params"]["run_dbt_build"]:
+    # Runs after transcription too (radio transcript files feed fct_radio_messages). The trigger rule lets it run when
+    # the mapped transcription tasks were SKIPPED (transcribe_radio=false); a failed transcription still blocks it.
+    @task(trigger_rule=TriggerRule.NONE_FAILED)
+    def run_dbt_build(load_result, selected_session_keys, **context):
+        from modules.dbt_runner import DbtRunError, run_dbt_plan
+
+        p = context["params"]
+        if not p["run_dbt_build"]:
             raise AirflowSkipException("run_dbt_build is off for this run.")
-        if not load_result["files"]:
-            raise AirflowSkipException("Nothing was extracted, so there is nothing to transform.")
-
-        env = {**os.environ, "DBT_PROFILES_DIR": DBT_PROFILES_DIR}
-        cmd = f"dbt build --target {shlex.quote(DBT_TARGET)} --profiles-dir {shlex.quote(DBT_PROFILES_DIR)}"
-        logging.info(f"Running: {cmd} (cwd={DBT_PROJECT_DIR})")
-        result = subprocess.run(cmd, shell=True, capture_output=True, text=True, cwd=DBT_PROJECT_DIR, env=env)
-        logging.info(result.stdout[-6000:])
-        if result.returncode != 0:
-            logging.error(result.stderr[-3000:])
-            raise AirflowFailException(f"dbt build failed with exit code {result.returncode}. See the task log above.")
-        return "dbt build succeeded"
-
-    # ==========================================
-    # OPTIONAL: TRANSCRIBE TEAM RADIO (one session at a time: CPU heavy)
-    # ==========================================
-    @task(max_active_tis_per_dag=1)
-    def transcribe_team_radio(target_session, **context):
-        if not context["params"]["transcribe_radio"]:
-            raise AirflowSkipException("transcribe_radio is off for this run.")
-        from modules.radio_transcriber import transcribe_session
-        return transcribe_session(target_session, RAW_DIR, model_name=os.environ.get("RADIO_WHISPER_MODEL", "small.en"))
-
-    radio_task = transcribe_team_radio.expand(target_session=all_sessions)
+        try:
+            scope = build_dbt_scope(
+                load_result["results"], selected_session_keys,
+                dbt_scope=p["dbt_scope"], dbt_full_refresh=bool(p["dbt_full_refresh"]),
+                chunk_size=int(p["dbt_chunk_size"]), allow_large_backfill=bool(p["allow_large_backfill"]),
+                non_telemetry_changed=bool(p["transcribe_radio"]),   # new transcript files change fct_radio_messages
+            )
+            if scope["mode"] == "none":
+                raise AirflowSkipException(f"dbt skipped: {scope['reason']}.")
+            steps = plan_dbt_commands(
+                scope, target=DBT_TARGET, profiles_dir=DBT_PROFILES_DIR,
+                radio_transcripts=radio_transcripts_exist(RAW_DIR), chunk_size=int(p["dbt_chunk_size"]),
+                dbt_executable=os.environ.get("DBT_EXECUTABLE", "dbt"),
+            )
+            summary = run_dbt_plan(steps, cwd=DBT_PROJECT_DIR, profiles_dir=DBT_PROFILES_DIR, scope=scope)
+        except ScopeError as exc:
+            raise AirflowFailException(str(exc)) from exc
+        except DbtRunError as exc:
+            raise AirflowFailException(str(exc)) from exc
+        return summary
 ```
 
 **What to notice**
 
-* **Opt-in and safe to skip:** `AirflowSkipException` marks the task *skipped* (pink), not failed, when the parameter is off or when nothing was extracted, so a normal extraction run never touches your warehouse.
-* **`shlex.quote`:** the target name and profiles folder are quoted before they reach a shell command. They come from environment variables here, but the habit costs nothing and prevents injection when someone later passes a value from a form.
-* **Failing loudly:** a non-zero dbt exit code raises `AirflowFailException`, so the task turns red with the tail of dbt's output in the log. The standard output is logged first, so a failed test is visible.
+* **Opt-in and safe to skip:** `AirflowSkipException` marks the task *skipped* (pink), not failed, when the parameter is off or when the scope says there is nothing to do, so a normal extraction run never touches your warehouse.
+* **The scope comes from the results, not from the file list:** `load_result["results"]` is the list of `{endpoint, session_key, path, status}` dictionaries that `verify_and_load` built (Chapter 3). Only `written` results count.
+* **Errors become task failures:** `ScopeError` (an invalid scope or an unsafe request) and `DbtRunError` (a non-zero dbt exit) both raise `AirflowFailException`, so the task turns red with a clear message and the full dbt output above it.
 * **`dbt build`, not `dbt run`:** the build runs the tests too, in dependency order, and **skips everything downstream of a failed test**. This is deliberate. It is also why the source-data tests are warnings on real data (Chapter 6): an error there would stop the whole pipeline.
-* **Separation:** the task shells out to the same dbt command you run by hand, so you can reproduce a failure in a terminal.
+* **The trigger rule and the extra dependency:** `radio_task >> dbt_task` makes dbt wait for transcription, and `TriggerRule.NONE_FAILED` lets it run when the mapped transcription tasks were skipped.
+* **Separation:** the task still runs the same dbt command you could run by hand, and it **logs that exact command**, so you can reproduce a failure in a terminal.
+
+**Step 2: The scope builder.** Create **airflow/dags/modules/dbt_scope.py**. It imports nothing from Airflow or dbt, so it is unit tested like the other helpers (`airflow/tests/test_dbt_scope.py`):
+
+```python
+"""Airflow-free helpers: turn extraction results into a dbt *scope*, and a scope into dbt commands.
+
+Design rules (see docs/SESSION_SCOPED_BUILDS.md):
+  1. The run tells dbt what changed. dbt never guesses: the scope is passed as the `session_keys` var.
+  2. An unset scope behaves as before (manual runs, CI and dbt_scope=full).
+  3. A scoped session is replaced, never appended (enforced by the dbt models, not here).
+  4. No `table` model may read scoped data (enforced by dbt/ci/check_scoped_views.py).
+
+Nothing here imports Airflow or touches dbt, so it is unit tested like the other helpers.
+"""
+import glob
+import json
+import os
+import re
+
+TELEMETRY_TAG = "telemetry_group"      # dbt tag on stg_car_data, stg_location and every model downstream of them
+DEFAULT_CHUNK_SIZE = 10
+SCOPE_MODES = ("none", "scoped", "full", "full_refresh")
+DBT_SCOPE_CHOICES = ("auto", "full")
+
+_DIGITS = re.compile(r"[0-9]+")
+
+
+class ScopeError(ValueError):
+    """The requested scope is invalid or unsafe. The DAG turns this into a failed task."""
+
+
+# ---------------------------------------------------------------------------------------------
+# validation
+# ---------------------------------------------------------------------------------------------
+def validate_session_keys(keys) -> list:
+    """Return sorted, de-duplicated positive ints. Anything else is rejected, never coerced:
+    the keys end up inside SQL (`session_key IN (...)`), so '9158; DROP' or 9158.5 must not get through."""
+    if keys is None or isinstance(keys, (str, bytes, dict)):
+        raise ScopeError(f"session keys must be a list of integers, got {type(keys).__name__}")
+    out = set()
+    for k in keys:
+        if isinstance(k, bool):
+            raise ScopeError(f"invalid session key {k!r}")
+        if isinstance(k, int):
+            value = k
+        elif isinstance(k, str) and _DIGITS.fullmatch(k.strip()):
+            value = int(k.strip())
+        else:
+            raise ScopeError(f"invalid session key {k!r}: session keys are integers")
+        if value <= 0:
+            raise ScopeError(f"invalid session key {k!r}: must be positive")
+        out.add(value)
+    return sorted(out)
+
+
+def validate_chunk_size(size) -> int:
+    if isinstance(size, bool) or not isinstance(size, int) or size < 1:
+        raise ScopeError(f"dbt_chunk_size must be an integer >= 1, got {size!r}")
+    return size
+
+
+def chunk_keys(keys, size) -> list:
+    keys = list(keys)
+    size = validate_chunk_size(size)
+    return [keys[i:i + size] for i in range(0, len(keys), size)]
+
+
+def flatten_results(*groups) -> list:
+    """Flatten Airflow's mapped-task outputs into one list of extractor result dicts.
+
+    The DAG passes lists of mapped-task outputs; Airflow resolves each mapped output to a LAZY SEQUENCE, which is not a list or
+    tuple, so this recurses into anything iterable (except dicts and strings). None entries (skipped mapped instances) are dropped.
+    Any other leaf is an error, never silently ignored: dropping results hides exactly the data the dbt scope is built from.
+    """
+    flat = []
+
+    def walk(item):
+        if item is None:
+            return
+        if isinstance(item, dict):
+            flat.append(item)
+        elif isinstance(item, (str, bytes)) or not hasattr(item, "__iter__"):
+            raise TypeError(f"unexpected extractor result of type {type(item).__name__}: {item!r}; expected a result dict")
+        else:
+            for sub in item:
+                walk(sub)
+
+    for group in groups:
+        walk(group)
+    return flat
+
+
+# ---------------------------------------------------------------------------------------------
+# scope builder
+# ---------------------------------------------------------------------------------------------
+def build_dbt_scope(results, sessions=None, *, dbt_scope="auto", dbt_full_refresh=False,
+                    chunk_size=DEFAULT_CHUNK_SIZE, allow_large_backfill=False, non_telemetry_changed=False) -> dict:
+    """Decide what dbt should build.
+
+    results   : list of extractor results {endpoint, session_key, path, status} (None / non-dicts are ignored)
+    sessions  : session keys this run selected (optional). When given, only these can end up in the scope.
+    returns   : {mode, keys, endpoints, chunks, reason}
+        mode 'none'         nothing was written: skip dbt
+        mode 'scoped'       `keys` = sessions with at least one file actually written; `chunks` = those keys in chunks
+        mode 'full'         dbt_scope=full: whole graph, scope unset (telemetry loads only the sessions it lacks)
+        mode 'full_refresh' deliberate rebuild of everything; refused unless allow_large_backfill is set
+    non_telemetry_changed: something outside the extractor results changed (e.g. radio transcripts were produced). When
+    nothing was written but this is true, the non-telemetry models still rebuild (scoped mode with no session keys).
+    """
+    if dbt_scope not in DBT_SCOPE_CHOICES:
+        raise ScopeError(f"dbt_scope must be one of {DBT_SCOPE_CHOICES}, got {dbt_scope!r}")
+    chunk_size = validate_chunk_size(chunk_size)
+
+    written = [r for r in (results or []) if isinstance(r, dict) and r.get("status") == "written"]
+    endpoints = sorted({r["endpoint"] for r in written if r.get("endpoint")})
+
+    if dbt_full_refresh:
+        if not allow_large_backfill:
+            raise ScopeError("dbt_full_refresh rebuilds every model, including the 200M+ row telemetry tables. "
+                             "Tick allow_large_backfill to run it deliberately.")
+        return {"mode": "full_refresh", "keys": [], "endpoints": endpoints, "chunks": [],
+                "reason": "dbt_full_refresh=true"}
+
+    if dbt_scope == "full":
+        return {"mode": "full", "keys": [], "endpoints": endpoints, "chunks": [],
+                "reason": "dbt_scope=full: whole graph, telemetry loads only missing sessions"}
+
+    if not written and non_telemetry_changed:
+        return {"mode": "scoped", "keys": [], "endpoints": [], "chunks": [],
+                "reason": "no extractor file was written, but other inputs changed (radio transcripts)"}
+
+    if not written:
+        return {"mode": "none", "keys": [], "endpoints": [], "chunks": [],
+                "reason": "no file was written in this run, so there is nothing to transform"}
+
+    wanted = None if sessions is None else set(validate_session_keys(sessions))
+    keys = set()
+    for r in written:
+        sk = r.get("session_key")
+        if sk == "global" or sk is None:
+            continue                      # global files (meetings, drivers, sessions) are not session scoped
+        sk = validate_session_keys([sk])[0]
+        if wanted is None or sk in wanted:
+            keys.add(sk)
+    keys = sorted(keys)
+    return {"mode": "scoped", "keys": keys, "endpoints": endpoints, "chunks": chunk_keys(keys, chunk_size),
+            "reason": f"{len(keys)} session(s) with written files"
+                      if keys else "only global files were written; no session telemetry to load"}
+
+
+# ---------------------------------------------------------------------------------------------
+# dbt command planning
+# ---------------------------------------------------------------------------------------------
+def radio_transcripts_exist(raw_dir: str) -> bool:
+    """enable_radio_transcripts must be true only when the files exist: a missing glob is a hard error in DuckDB."""
+    return bool(glob.glob(os.path.join(raw_dir, "radio_transcripts_*_extracted.parquet")))
+
+
+def _vars_arg(variables: dict) -> list:
+    # JSON is valid YAML, which is what dbt parses --vars as. Compact separators: no shell, so no quoting needed.
+    return ["--vars", json.dumps(variables, separators=(",", ":"), sort_keys=True)] if variables else []
+
+
+def plan_dbt_commands(scope: dict, *, target: str, profiles_dir: str, radio_transcripts: bool = False,
+                      chunk_size: int = DEFAULT_CHUNK_SIZE, dbt_executable: str = "dbt") -> list:
+    """Return the ordered dbt invocations as [{label, argv, session_keys}]. argv is a list: it is never joined into a shell string.
+
+    scoped, one chunk of sessions : ONE whole-graph build with session_keys set. Telemetry group replaces those
+                                    sessions; every other model does its normal cheap full rebuild.
+    scoped, many chunks           : first the non-telemetry models once (the telemetry group reads fct_fastest_laps,
+                                    int_lap_context and stg_laps, so they must be fresh first), then the telemetry
+                                    group once per chunk of sessions.
+    scoped, no session keys       : non-telemetry models only (only global files changed).
+    """
+    mode = scope.get("mode")
+    if mode not in SCOPE_MODES:
+        raise ScopeError(f"unknown scope mode {mode!r}")
+    if mode == "none":
+        return []
+
+    base = [dbt_executable, "build", "--target", target, "--profiles-dir", profiles_dir]
+    common = {"enable_radio_transcripts": True} if radio_transcripts else {}
+    tag = f"tag:{TELEMETRY_TAG}"
+
+    def step(label, extra, variables=None, keys=None):
+        return {"label": label, "argv": base + extra + _vars_arg({**common, **(variables or {})}),
+                "session_keys": keys or []}
+
+    if mode == "full":
+        return [step("whole graph (scope unset)", [])]
+    if mode == "full_refresh":
+        return [step("FULL REFRESH of the whole graph", ["--full-refresh"])]
+
+    keys = validate_session_keys(scope.get("keys", []))
+    if not keys:
+        return [step("non-telemetry models (no session scope)", ["--exclude", tag])]
+    chunks = chunk_keys(keys, validate_chunk_size(chunk_size))
+    if len(chunks) == 1:
+        return [step(f"whole graph, scoped to {len(keys)} session(s)", [], {"session_keys": keys}, keys)]
+    steps = [step("non-telemetry models", ["--exclude", tag])]
+    for i, chunk in enumerate(chunks, 1):
+        steps.append(step(f"telemetry group, chunk {i}/{len(chunks)} ({len(chunk)} sessions)",
+                          ["--select", tag], {"session_keys": chunk}, chunk))
+    return steps
+```
+
+**Reading it**
+
+* **`validate_session_keys`:** accepts only positive integers (or digit strings) and returns them sorted and de-duplicated. The keys end up inside SQL (`session_key IN (...)`), so `"9158; DROP"`, `9158.5`, `true` or `0` are **rejected, never coerced**. The dbt macro validates again (Chapter 7); two checks at two boundaries.
+* **`flatten_results`:** turns the mapped-task outputs into one list of result dictionaries. It recurses into any iterable because Airflow hands over lazy sequences (see the Chapter 3 pitfall), drops `None`, and raises on anything else.
+* **`build_dbt_scope`:** the decision. `written` results give the scope; `skipped` and `empty` ones do not. Global files (`session_key` is `global`) are not sessions. The table below is the whole behaviour.
+* **`plan_dbt_commands`:** turns a scope into the ordered dbt commands. It sets `enable_radio_transcripts` only if transcript files exist (`radio_transcripts_exist`), because a missing glob is a hard error in DuckDB.
+
+| Run | What dbt does |
+|---|---|
+| `latest`, one key, or no more sessions than `dbt_chunk_size` | **one** whole-graph build with `session_keys` set: the telemetry group replaces those sessions, every other model does its normal cheap full rebuild |
+| more sessions than one chunk | the non-telemetry models **once** (`--exclude tag:telemetry_group`), then the telemetry group once per chunk (`--select tag:telemetry_group --vars {session_keys: [...]}`) |
+| `skip_existing` | the scope is only the sessions with files actually **written** |
+| only global files written | the non-telemetry models only |
+| nothing written, `transcribe_radio` off | dbt is skipped |
+| `dbt_scope=full` | the whole graph with **no scope** (the telemetry tables load only sessions they lack); ignores the extraction results |
+| `dbt_full_refresh=true` | `dbt build --full-refresh` of everything; refused unless `allow_large_backfill` is also ticked |
+
+> **Why the non-telemetry models run first in a multi-chunk run.** The corner and delta-trace models read `fct_fastest_laps`, `int_lap_context` and `stg_laps`. If those were rebuilt *after* the telemetry chunks, the chunks would be built from stale laps. Nothing outside the telemetry group depends on it, so the order costs nothing.
+
+**Step 3: The runner.** Create **airflow/dags/modules/dbt_runner.py**:
+
+```python
+"""Runs the dbt commands planned by modules.dbt_scope. Airflow-free, so it can be tested with a fake `runner`.
+
+Safety properties:
+  * every command is an argument list handed to subprocess.run, never a shell string (shell=False)
+  * the exact command and scope are logged before each step runs
+  * a failing step stops the run and raises DbtRunError with the tail of dbt's output
+"""
+import logging
+import os
+import shlex
+import subprocess
+import time
+
+
+class DbtRunError(RuntimeError):
+    """A dbt invocation exited non-zero. The DAG turns this into a failed task."""
+
+
+def run_dbt_plan(steps, *, cwd: str, profiles_dir: str, scope: dict = None, runner=subprocess.run, log=logging) -> dict:
+    """Run each planned step in order; return a summary dict (also safe to return from an Airflow task)."""
+    env = {**os.environ, "DBT_PROFILES_DIR": profiles_dir}
+    scope = scope or {}
+    log.info("dbt scope: mode=%s keys=%s endpoints=%s (%s)", scope.get("mode"), scope.get("keys"),
+             scope.get("endpoints"), scope.get("reason"))
+    summary = {"mode": scope.get("mode"), "session_keys": scope.get("keys", []), "steps": []}
+    for i, step in enumerate(steps, 1):
+        argv = step["argv"]
+        log.info("dbt step %d/%d [%s]: %s (cwd=%s)", i, len(steps), step["label"], shlex.join(argv), cwd)
+        started = time.monotonic()
+        result = runner(argv, capture_output=True, text=True, cwd=cwd, env=env, shell=False)
+        seconds = round(time.monotonic() - started, 1)
+        log.info(result.stdout or "")      # the whole dbt output: per-model timings are needed to see what is slow
+        summary["steps"].append({"label": step["label"], "command": shlex.join(argv),
+                                 "returncode": result.returncode, "seconds": seconds})
+        if result.returncode != 0:
+            log.error((result.stderr or "")[-3000:])
+            raise DbtRunError(f"dbt step {i}/{len(steps)} [{step['label']}] failed with exit code {result.returncode}. "
+                              f"Command: {shlex.join(argv)}. See the task log above.")
+    return summary
+```
+
+* **No shell:** every step is an argument list passed with `shell=False`.
+* **Logs the scope and the exact command** before each step, then dbt's **entire** output (the first version kept only the last 6,000 characters, which cut the log mid-line and hid the per-model timings).
+* **Stops at the first failing step** and raises `DbtRunError` naming the command. It returns a summary (mode, session keys, each step's command, exit code and seconds) that Airflow stores as the task's return value.
+
+**The three parameters.** In the trigger form: `dbt_scope` (`auto`, the default, or `full`), `dbt_full_refresh` (off) and `dbt_chunk_size` (default 10, minimum 1). They only matter when `run_dbt_build` is on.
+
+**What the log should show.** For a `latest` run that wrote session 11420 the task log contains a line like `dbt scope: mode=scoped keys=[11420] endpoints=[...] (1 session(s) with written files)`, then `dbt step 1/1 [whole graph, scoped to 1 session(s)]: dbt build --target container --profiles-dir ... --vars '{"enable_radio_transcripts":true,"session_keys":[11420]}'`, then dbt's output, then `Marking task as SUCCESS`. If you see `keys=[]` after an extraction that wrote files, see the Chapter 3 pitfall.
 
 #### **Task 3: Where Cosmos Fits (Optional)**
 
-`airflow/dags/dbt_cosmos_dag.py` now exists. It uses **Astronomer Cosmos**, a library that renders each dbt model as its own Airflow task, so a failed model or test shows up in the Airflow graph instead of as one opaque "dbt build". It is **[CODE FINAL, RUN NOT CONFIRMED]**: it needs `astronomer-cosmos` in the image (add it to `AIRFLOW_EXTRA_PIP`), and it excludes the heavy incremental telemetry models so they are not rebuilt on every run. If Cosmos is not installed the file defines nothing and Airflow parses it cleanly, so it is safe to leave in place. Treat it as the next learning step once the plain `run_dbt_build` task works.
+`airflow/dags/dbt_cosmos_dag.py` now exists. It uses **Astronomer Cosmos**, a library that renders each dbt model as its own Airflow task, so a failed model or test shows up in the Airflow graph instead of as one opaque "dbt build". It is **[CODE FINAL, RUN NOT CONFIRMED]**: it needs `astronomer-cosmos` in the image (add it to `AIRFLOW_EXTRA_PIP`), and it excludes the heavy incremental telemetry models so they are not rebuilt on every run. It does **not** pass the session scope (passing it through Cosmos is a deferred item), so it only ever behaves like an unscoped run: the incremental models there load only the sessions they lack. If Cosmos is not installed the file defines nothing and Airflow parses it cleanly, so it is safe to leave in place. Treat it as the next learning step once the plain `run_dbt_build` task works.
 
 ### **Learner Pitfalls & Troubleshooting**
 
@@ -5715,8 +6358,20 @@ The task is already part of the DAG you pasted in Chapter 3 (it is skipped unles
 * **The Solution:** disconnect interactive tools before the scheduled run, or schedule dbt when nobody is querying.
 
 * **The Problem:** the dbt task is skipped every time.
-* **Why it Happens:** both opt-in parameters default to off, and the task also skips when nothing was extracted.
-* **The Solution:** tick **run_dbt_build** in *Trigger DAG w/ config*, and check the extract tasks actually wrote files.
+* **Why it Happens:** the opt-in parameter defaults to off, and the task also skips when the scope says nothing changed: no file was written (for example `skip_existing` found every file already on disk) and `transcribe_radio` is off.
+* **The Solution:** tick **run_dbt_build** in *Trigger DAG w/ config*, and check the `verify_and_load` log line (`N Parquet files ready (X written, Y skipped, Z empty)`): `X` must be above zero. To rebuild without extracting, use `dbt_scope=full`.
+
+* **The Problem (third edition):** the task fails at once with `dbt_full_refresh rebuilds every model ... Tick allow_large_backfill`.
+* **Why it Happens:** a full refresh rebuilds the 200M-row telemetry tables, so it is behind the same guard as a large backfill.
+* **The Solution:** tick `allow_large_backfill` only if you mean it, and leave `dbt_scope` at `auto`; the refresh never sets a session scope.
+
+* **The Problem (third edition):** a scoped run takes about 20 minutes inside Docker although only one session changed.
+* **Why it Happens:** the telemetry steps are a few minutes of that; the rest is the non-telemetry build, and every staging view has to open the Parquet files through the Docker bind mount on Windows. On the author's machine the same build took about 20 minutes in the container against about 4.5 on the host, roughly four times slower: staging views took 8 to 18 seconds each, and the heaviest model, `int_lap_context`, between 2 and 4 minutes. It is file access, not model logic, and every scoped run also re-scans all raw car data and location files, because the session filter cannot skip files.
+* **The Solution:** read the per-model timings now present in the task log (or `target/run_results.json`) before optimising. Moving the raw files and warehouse onto a Docker volume is the cheapest next step; converting the heaviest non-telemetry models to incremental is the next one.
+
+* **The Problem (third edition, Windows):** `docker compose exec ... grep ... /opt/airflow/dags/modules/dbt_scope.py` fails with `C:/Program Files/Git/opt/airflow/...: No such file or directory`.
+* **Why it Happens:** Git Bash rewrites any argument that starts with `/` into a Windows path before Docker sees it.
+* **The Solution:** prefix the command with `MSYS_NO_PATHCONV=1` (or start the path with `//`). This is the quickest way to prove the container sees your edited DAG module.
 
 ---
 
@@ -6642,7 +7297,7 @@ dbt deps && dbt seed --target bigquery
 dbt build --target bigquery --exclude fct_telemetry+      # build everything except telemetry first
 ```
 
-Then telemetry, one session at a time (Chapter 7's `telemetry_only_sessions`), watching the bill.
+Then telemetry, one session at a time (Chapter 7's `session_keys`), watching the bill.
 
 **What is different on BigQuery.** The telemetry tables are **partitioned with exactly one session per partition**, so the `insert_overwrite` strategy can only ever replace the session being loaded. If one partition held several sessions, loading a new one would silently overwrite its neighbours. The partition range is `bq_session_key_start` to `bq_session_key_end` (9000 to 13000 by default, at most 4000 partitions): **raise the upper bound before the season counter passes it**, because sessions outside the range land in a catch-all partition.
 
@@ -6715,7 +7370,7 @@ The first edition had two empty files and a reference sketch. The second edition
 * **Continuous Integration (CI):** on every pull request, run automatic checks.
 * **Continuous Deployment (CD):** on a manual trigger, ship the code to the environment.
 
-**`ci.yml`** is the one that matters day to day. It runs, in order, every Python test, a compile check of the DAG code, a synthetic-data build of the whole dbt project (models and tests), and the dashboard tests:
+**`ci.yml`** is the one that matters day to day. It runs, in order, every Python test (including the helpers' own tests), a compile check of the DAG code, a synthetic-data build of the whole dbt project (models and tests), the **truncation guard**, the **scoped-build equivalence check** (both new in the third edition, Task 4), and the dashboard tests:
 
 ```yaml
 name: ci
@@ -6732,8 +7387,10 @@ jobs:
         with:
           python-version: "3.11"
       - run: pip install dbt-duckdb pyarrow pytest numpy duckdb streamlit plotly
-      - name: Python unit tests (extractor, manifest, GCS loader, radio, BigQuery loader)
+      - name: Python unit tests (extractor, manifest, dbt scope and runner, GCS loader, radio, BigQuery loader)
         run: python -m pytest -q airflow/tests
+      - name: Truncation-guard unit tests
+        run: python -m pytest -q dbt_f1_transformations/ci/tests
       - name: Strategy simulator tests
         run: python -m pytest -q analytics/tests
       - name: Compile DAG and plugin code
@@ -6751,6 +7408,15 @@ jobs:
         run: |
           dbt seed --profiles-dir . --target ci
           dbt build --profiles-dir . --target ci --vars '{enable_radio_transcripts: true, min_stint_laps_for_degradation: 3}'
+      - name: Truncation guard (no table model may read scoped data; the telemetry_group tag matches the graph)
+        working-directory: dbt_f1_transformations
+        run: python ci/check_scoped_views.py target/manifest.json
+      - name: Scoped-build equivalence (replace, idempotency, zero rows, vanished upstream) on copies of the built warehouse
+        working-directory: dbt_f1_transformations
+        env:
+          F1_RAW_DATA_PATH: ${{ runner.temp }}/f1_raw
+          F1_DUCKDB_PATH: ${{ runner.temp }}/f1_ci.duckdb
+        run: python ci/scoped_equivalence_check.py --full-db "$F1_DUCKDB_PATH" --raw-dir "$F1_RAW_DATA_PATH" --session 9002 --target ci
       - name: Dashboard tests (every page renders against the built warehouse)
         env:
           F1_DUCKDB_PATH: ${{ runner.temp }}/f1_ci.duckdb
@@ -6780,7 +7446,8 @@ jobs:
 
 **Read it like an engineer**
 
-* **One job, whatever DuckDB is current.** The workflow installs the latest `duckdb`. DuckDB 1.5 once crashed on an `INTEGER`/`BIGINT` mismatch (Chapter 5), so if you want an engine regression to fail a pull request instead of your laptop, add a matrix of DuckDB versions. `make ci-test` was run by hand for this edition on DuckDB 1.5.6 and 2.0.0 and passes all 135 nodes; the workflow file itself has not been confirmed on GitHub.
+* **One job, whatever DuckDB is current.** The workflow installs the latest `duckdb`. DuckDB 1.5 once crashed on an `INTEGER`/`BIGINT` mismatch (Chapter 5), so if you want an engine regression to fail a pull request instead of your laptop, add a matrix of DuckDB versions. `make ci-test` was run by hand for the second edition on DuckDB 1.5.6 and 2.0.0. For the third edition the full fixtures build (`dbt build --target ci`: 143 nodes, 142 passed, 1 warning, which also appears on the commit before the change) and the equivalence check were run by hand on DuckDB 2.0.0 with dbt-core 1.11.7 and dbt-duckdb 1.10.1; the workflow file itself has not been confirmed on GitHub.
+* **The truncation guard and the equivalence check run after the full build**, on the warehouse it just produced. The guard only reads dbt's `manifest.json`; the equivalence check works on **copies** of the built database and never modifies it.
 * **No real data and no secrets.** The dataset is generated on the spot (`generate_fixtures.py`), so CI needs no API access and no credentials.
 * **`bigquery-emulator` is `continue-on-error: true`.** It downloads the emulator and runs the equivalence test from Chapter 10. It stays advisory until it has proven stable on GitHub's runners.
 
@@ -6800,12 +7467,14 @@ make ci-test
 
 | Step | Expected |
 |---|---|
-| `python -m pytest -q airflow/tests` | extractor, manifest, GCS loader, radio transcriber, BigQuery loader tests pass |
+| `python -m pytest -q airflow/tests` | extractor (including the `written` / `skipped` / `empty` results), manifest, dbt scope builder, dbt runner, GCS loader, radio transcriber, BigQuery loader tests pass |
+| `python -m pytest -q dbt_f1_transformations/ci/tests` | the truncation guard's own tests pass (third edition) |
 | `python -m pytest -q analytics/tests` | strategy simulator tests pass |
-| `dbt seed` then `dbt build --target ci` | every model and test passes (135 nodes) |
+| `dbt seed` then `dbt build --target ci` | every model and test passes (143 nodes; the one expected warning is `assert_race_results_have_laps`) |
+| `make scoped-check` | the truncation guard passes and `scoped_equivalence_check.py` reports `ALL CHECKS PASSED` (third edition) |
 | `python -m pytest -q dashboards/tests` | every dashboard page renders (104 tests) |
 
-Other targets: `make dashboard` (the Streamlit app), `make strategy SESSION=<a real key>`, `make semantic-validate` (MetricFlow, Chapter 9) and `make bq-emulator-test` (Chapter 10). If `make` is not installed (common in Git Bash on Windows), the commands in the `Makefile` can be typed directly; just remember that DuckDB needs `F:/...` style paths, not `/f/...`.
+Other targets: `make dashboard` (the Streamlit app), `make strategy SESSION=<a real key>`, `make semantic-validate` (MetricFlow, Chapter 9) and `make bq-emulator-test` (Chapter 10). If `make` is not installed (common in Git Bash on Windows), the commands in the `Makefile` can be typed directly; just remember that DuckDB needs `F:/...` style paths, not `/f/...`. **Do not skip the first step quietly:** the fixtures are produced by `python dbt_f1_transformations/ci/generate_fixtures.py .ci_raw/raw`, and if that step is missed the build runs on whatever data and database file are already there (see the third-edition pitfall below). When in doubt, `rm -rf .ci_raw` first.
 
 **Why synthetic data is worth the trouble.** The dataset is small and deterministic, and it deliberately contains the situations the code must handle: a safety car, a sector yellow, rain starting, a penalty message, an in-lap and out-lap, an **overlapping stint**, string-typed gap columns in one session and numeric in another, and car-data and location timestamps that do not line up. When a test fails you know what you broke.
 
@@ -6817,9 +7486,332 @@ Other targets: `make dashboard` (the Streamlit app), `make strategy SESSION=<a r
 dbt seed
 dbt build --select staging                              # fix any "column not found" first
 dbt build --select +int_lap_context+ --exclude fct_telemetry+
-dbt run --select fct_telemetry --vars '{telemetry_only_sessions: [<session_key>]}'     # add sessions as needed
+dbt run --select fct_telemetry --vars '{session_keys: [<session_key>]}'     # add sessions as needed
 dbt build --select fct_telemetry+
 ```
+
+#### **Task 4: Prove the Scoped Builds Are Safe (third edition)**
+
+A scoped build that is *almost* right is worse than none, because the damage is silent: another session's rows quietly disappear. Two scripts in **dbt_f1_transformations/ci/** check the two things that matter. Both run in CI after the full build and in `make scoped-check`.
+
+**The truncation guard.** Rule 4 of the design says no `table` model may read scoped data. **ci/check_scoped_views.py** reads `target/manifest.json` (produced by any dbt command that parses the project) and fails if a model that uses the scope is a table, if a table reads a scoped view directly or through other views, or if the `telemetry_group` tag has drifted away from the graph (a model that reads the group but is not tagged would be built at the wrong time by Airflow):
+
+```python
+"""Truncation guard (rule 4 of the session-scoped build design).
+
+A `table` model rebuilt from a SCOPED view silently loses every other session. This reads target/manifest.json and fails when:
+  1. a model whose SQL uses the scope (in_scope, scope_session_keys, telemetry_load_filter) is materialized as a table, or
+  2. a `table` model reads a scoped VIEW or ephemeral model (directly, or through views in between). Reading a scoped INCREMENTAL
+     model is fine: it is persisted and holds every session, or
+  3. the telemetry_group tag is out of step with the graph: a model that reads a telemetry_group model, or a scoped model, is not tagged.
+
+  python ci/check_scoped_views.py [path/to/manifest.json]      (default: target/manifest.json; run `dbt parse` first)
+Exit code 1 on any violation.
+"""
+import json
+import sys
+
+SCOPE_MARKERS = ("in_scope(", "scope_session_keys(", "telemetry_load_filter(")
+GROUP_TAG = "telemetry_group"
+
+
+def _models(manifest):
+    return {uid: n for uid, n in manifest["nodes"].items() if n.get("resource_type") == "model"}
+
+
+def _materialized(node):
+    return (node.get("config") or {}).get("materialized")
+
+
+def _is_scoped(node):
+    code = node.get("raw_code") or node.get("raw_sql") or ""
+    return any(marker in code for marker in SCOPE_MARKERS)
+
+
+def check(manifest) -> list:
+    models = _models(manifest)
+    scoped = {uid for uid, n in models.items() if _is_scoped(n)}
+    # models that expose only the scoped sessions to whoever reads them (incremental models persist ALL sessions, so they do not)
+    exposing = {uid for uid in scoped if _materialized(models[uid]) != "incremental"}
+    violations = []
+
+    for uid in sorted(scoped):
+        if _materialized(models[uid]) == "table":
+            violations.append(f"{models[uid]['name']}: reads the session scope but is materialized as a TABLE")
+
+    def reaches_scoped(uid, seen):
+        """Does `uid` read a scoped model, directly or through non-persisting (view / ephemeral) models?"""
+        for parent in (models[uid].get("depends_on") or {}).get("nodes", []):
+            if parent in exposing:
+                return parent
+            if parent in models and parent not in seen and _materialized(models[parent]) in ("view", "ephemeral"):
+                seen.add(parent)
+                hit = reaches_scoped(parent, seen)
+                if hit:
+                    return hit
+        return None
+
+    for uid, node in sorted(models.items()):
+        if _materialized(node) == "table":
+            hit = reaches_scoped(uid, {uid})
+            if hit:
+                violations.append(f"{node['name']}: TABLE reads scoped model {models[hit]['name']} "
+                                  f"(it would silently lose every session outside the scope)")
+
+    tagged = {uid for uid, n in models.items() if GROUP_TAG in (n.get("tags") or [])}
+    for uid, node in sorted(models.items()):
+        parents = set((node.get("depends_on") or {}).get("nodes", []))
+        if parents & (scoped | tagged) and uid not in tagged:
+            violations.append(f"{node['name']}: reads a scoped or {GROUP_TAG} model but is not tagged {GROUP_TAG} "
+                              f"(add it to dbt_project.yml so Airflow builds it with the group)")
+    for uid in sorted(scoped - tagged):
+        violations.append(f"{models[uid]['name']}: is scoped but not tagged {GROUP_TAG}")
+    return violations
+
+
+def main(argv):
+    path = argv[1] if len(argv) > 1 else "target/manifest.json"
+    with open(path) as fh:
+        manifest = json.load(fh)
+    problems = check(manifest)
+    models = _models(manifest)
+    print(f"checked {len(models)} models; scoped: {sorted(n['name'] for n in models.values() if _is_scoped(n))}")
+    for p in problems:
+        print("VIOLATION:", p)
+    print("OK: no table model reads scoped data" if not problems else f"{len(problems)} violation(s)")
+    return 1 if problems else 0
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv))
+```
+
+Its tests, in **ci/tests/test_check_scoped_views.py**, feed it small hand-made manifests: the intended design passes, and each kind of violation is caught. Run it with `python ci/check_scoped_views.py target/manifest.json` from `dbt_f1_transformations/`.
+
+**The equivalence check.** **ci/scoped_equivalence_check.py** takes a warehouse that was built **in full** and proves, on copies, that rebuilding one session through the scoped path gives the same result as the full build:
+
+| Scenario | What it proves |
+|---|---|
+| 1. Damage one session (change speeds, delete lap-summary and corner rows, add a duplicate), then run the **whole-graph** scoped build | that session equals the full build again, and every other session is unchanged, including a sentinel row tampered with in another session |
+| 2. The same scoped build again | idempotent: nothing changes |
+| 3. Damage the session, then run only `--select tag:telemetry_group` | the per-chunk build used by multi-session runs gives the same result |
+| 4. A scope for a session that exists nowhere | a no-op |
+| 5. Remove the session's car-data and location files from a copy of the raw folder, then run a scoped build | the session's old rows are **cleared** from all six tables (the pre-delete), while other sessions are untouched |
+
+```bash
+cd dbt_f1_transformations
+python ci/scoped_equivalence_check.py --full-db "$F1_DUCKDB_PATH" --raw-dir "$F1_RAW_DATA_PATH" --session 9002 --target ci
+```
+
+The full script, which needs `dbt` and the `duckdb` Python package on your path:
+
+```python
+"""Equivalence check for session-scoped incremental builds (DuckDB).
+
+Proves, on a copy of a warehouse that was built IN FULL, that rebuilding one session through the scoped path:
+  * replaces that session exactly as a fresh full build computed it (no stale rows, no duplicates),
+  * leaves every other session byte-for-byte untouched (including rows we deliberately tampered with as sentinels),
+  * is idempotent (a second identical run changes nothing),
+  * is a no-op for a session that has no data anywhere, and
+  * CLEARS a session whose upstream rows vanished (the pre-delete), instead of leaving stale rows behind.
+
+  cd dbt_f1_transformations
+  F1_RAW_DATA_PATH=<fixtures dir> python ci/scoped_equivalence_check.py --full-db <built.duckdb> [--session 9002] [--target ci]
+
+The input warehouse is only ever copied, never modified. Needs `dbt` (dbt-duckdb) on PATH and the `duckdb` Python package.
+Exit code 1 on any failure.
+"""
+import argparse
+import collections
+import datetime
+import decimal
+import json
+import os
+import shutil
+import subprocess
+import sys
+import tempfile
+
+import duckdb
+
+GROUP_TABLES = ["fct_telemetry", "fct_telemetry_distance_trace", "fct_telemetry_lap_summary",
+                "fct_lap_time_delta_trace", "dim_session_corners", "fct_corner_performance"]
+CI_VARS = {"enable_radio_transcripts": True, "min_stint_laps_for_degradation": 3}
+FAILURES = []
+
+
+def norm(v):
+    if v is None or isinstance(v, (bool, int, str)):
+        return v
+    if isinstance(v, (float, decimal.Decimal)):
+        return round(float(v), 5)
+    if isinstance(v, datetime.datetime):
+        return (v.astimezone(datetime.timezone.utc).replace(tzinfo=None) if v.tzinfo else v).isoformat(timespec="milliseconds")
+    if isinstance(v, (list, tuple)):
+        return str([norm(x) for x in v])
+    return v
+
+
+def snapshot(db):
+    """{table: {session_key: Counter(rows)}} for every telemetry-group table. Rows are unordered multisets."""
+    con = duckdb.connect(db, read_only=True)
+    try:
+        out = {}
+        for t in GROUP_TABLES:
+            cur = con.execute(f'SELECT * FROM "{t}"')
+            cols = [d[0] for d in cur.description]
+            k = cols.index("session_key")
+            per = collections.defaultdict(collections.Counter)
+            for row in cur.fetchall():
+                per[row[k]][tuple(norm(x) for x in row)] += 1
+            out[t] = per
+        return out
+    finally:
+        con.close()
+
+
+def execute(db, statements):
+    con = duckdb.connect(db)
+    try:
+        for s in statements:
+            con.execute(s)
+    finally:
+        con.close()
+
+
+def check(ok, message):
+    print(("  ok    " if ok else "  FAIL  ") + message)
+    if not ok:
+        FAILURES.append(message)
+
+
+def same_rows(a, b):
+    return a == b      # Counter equality: same rows, same multiplicities
+
+
+EXCLUDE = None     # set from --exclude: dbt node selection to leave out of every build (e.g. a known failing test)
+
+
+def run_dbt(args, db, raw_dir, target, variables):
+    if EXCLUDE:
+        args = args + ["--exclude", EXCLUDE]
+    env = {**os.environ, "F1_DUCKDB_PATH": db, "F1_RAW_DATA_PATH": raw_dir}
+    cmd = ["dbt", "build", "--profiles-dir", ".", "--target", target] + args + ["--vars", json.dumps(variables)]
+    print("  $", " ".join(cmd))
+    res = subprocess.run(cmd, capture_output=True, text=True, env=env)
+    if res.returncode != 0:
+        print(res.stdout[-4000:])
+        print(res.stderr[-2000:])
+    check(res.returncode == 0, f"dbt exited 0 ({' '.join(args) or 'whole graph'})")
+    return res.returncode == 0
+
+
+def compare(after, expected_for_k, before, k, what):
+    """Session k must equal expected_for_k; every other session must equal `before`."""
+    for t in GROUP_TABLES:
+        check(same_rows(after[t].get(k, collections.Counter()), expected_for_k[t].get(k, collections.Counter())),
+              f"{what}: {t} session {k} matches the full build")
+        others_after = {s: c for s, c in after[t].items() if s != k}
+        others_before = {s: c for s, c in before[t].items() if s != k}
+        check(others_after == others_before, f"{what}: {t} other sessions untouched")
+
+
+def main():
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--full-db", required=True, help="warehouse built in full (copied, never modified)")
+    ap.add_argument("--raw-dir", default=os.environ.get("F1_RAW_DATA_PATH"), help="raw Parquet dir the full build read")
+    ap.add_argument("--session", type=int, default=9002, help="session to rebuild through the scoped path")
+    ap.add_argument("--target", default="ci")
+    ap.add_argument("--exclude", default=None, help="dbt --exclude passed to every build, e.g. a test that already fails on the baseline")
+    a = ap.parse_args()
+    global EXCLUDE
+    EXCLUDE = a.exclude
+    if not a.raw_dir:
+        sys.exit("--raw-dir (or F1_RAW_DATA_PATH) is required")
+    k = a.session
+    work_dir = tempfile.mkdtemp(prefix="f1_scoped_eq_")
+    try:
+        full = snapshot(a.full_db)
+        have = {s for t in GROUP_TABLES for s in full[t]}
+        if k not in have or len(have) < 2:
+            sys.exit(f"need telemetry for session {k} and at least one other session in {a.full_db}; found {sorted(have)}")
+        sentinel = sorted(have - {k})[0]
+        print(f"session under test: {k}; sentinel (must stay untouched): {sentinel}")
+
+        def fresh_copy(name):
+            p = os.path.join(work_dir, name)
+            shutil.copy(a.full_db, p)
+            return p
+
+        def tamper(db):
+            """Damage session k in every way a stale/partial load could, and mark a sentinel row in another session."""
+            execute(db, [
+                f"UPDATE fct_telemetry SET speed = speed + 7 WHERE session_key = {k}",
+                f"DELETE FROM fct_telemetry_distance_trace WHERE session_key = {k} AND distance_bin % 2 = 0",
+                f"DELETE FROM fct_telemetry_lap_summary WHERE session_key = {k}",
+                f"INSERT INTO fct_corner_performance SELECT * FROM fct_corner_performance WHERE session_key = {k} LIMIT 1",
+                f"DELETE FROM dim_session_corners WHERE session_key = {k}",
+                f"UPDATE fct_telemetry SET speed = speed + 1 WHERE session_key = {sentinel}",
+                f"UPDATE fct_lap_time_delta_trace SET speed_delta_kph = 123.0 WHERE session_key = {sentinel}",
+            ])
+
+        print("\n[1] damaged session, whole-graph scoped build (what Airflow runs for one session)")
+        db1 = fresh_copy("one.duckdb")
+        tamper(db1)
+        before = snapshot(db1)
+        check(not same_rows(before["fct_telemetry"][k], full["fct_telemetry"][k]), "the damage is visible before the run (test is meaningful)")
+        if run_dbt([], db1, a.raw_dir, a.target, {**CI_VARS, "session_keys": [k]}):
+            after = snapshot(db1)
+            compare(after, full, before, k, "scoped replace")
+            print("\n[2] idempotency: the same scoped build again")
+            if run_dbt([], db1, a.raw_dir, a.target, {**CI_VARS, "session_keys": [k]}):
+                again = snapshot(db1)
+                check(again == after, "second identical run changes nothing")
+
+        print("\n[3] damaged session, telemetry-group-only build (what Airflow runs per chunk)")
+        db2 = fresh_copy("chunk.duckdb")
+        tamper(db2)
+        before2 = snapshot(db2)
+        if run_dbt(["--select", "tag:telemetry_group"], db2, a.raw_dir, a.target, {**CI_VARS, "session_keys": [k]}):
+            compare(snapshot(db2), full, before2, k, "chunk replace")
+
+        print("\n[4] zero rows: a scope with no data anywhere is a no-op")
+        db3 = fresh_copy("empty.duckdb")
+        before3 = snapshot(db3)
+        if run_dbt(["--select", "tag:telemetry_group"], db3, a.raw_dir, a.target, {**CI_VARS, "session_keys": [987654321]}):
+            check(snapshot(db3) == before3, "nothing changed for an unknown session")
+
+        print(f"\n[5] upstream vanished: session {k} has no telemetry files any more, so its old rows must be cleared")
+        db4 = fresh_copy("vanished.duckdb")
+        raw_copy = os.path.join(work_dir, "raw_without_telemetry")
+        shutil.copytree(a.raw_dir, raw_copy)
+        for endpoint in ("car_data", "location"):
+            path = os.path.join(raw_copy, f"{endpoint}_{k}_extracted.parquet")
+            if os.path.exists(path):
+                os.remove(path)
+        before4 = snapshot(db4)
+        if run_dbt(["--select", "tag:telemetry_group"], db4, raw_copy, a.target, {**CI_VARS, "session_keys": [k]}):
+            after4 = snapshot(db4)
+            for t in GROUP_TABLES:
+                check(sum(after4[t].get(k, collections.Counter()).values()) == 0, f"vanished upstream: {t} holds no stale rows for {k}")
+                check({s: c for s, c in after4[t].items() if s != k} == {s: c for s, c in before4[t].items() if s != k},
+                      f"vanished upstream: {t} other sessions untouched")
+
+        print("\n" + ("ALL CHECKS PASSED" if not FAILURES else f"{len(FAILURES)} CHECK(S) FAILED"))
+        for f in FAILURES:
+            print("  -", f)
+        return 1 if FAILURES else 0
+    finally:
+        shutil.rmtree(work_dir, ignore_errors=True)
+
+
+if __name__ == "__main__":
+    sys.exit(main())
+```
+
+* **Why it works on copies:** each scenario copies the database file, so the warehouse you pass in is never modified, and every comparison is of unordered row multisets (floats rounded to five decimals).
+* **`--exclude`:** passes a dbt `--exclude` to every build, for a test you already know fails on the baseline. Use it to keep checking your own change around an unrelated failure, then fix the real cause.
+* **What it does not prove:** that the *full* build is right on real data (Chapters 5 to 7 cover that), or BigQuery, whose emulator cannot re-run incremental models.
 
 ### **Learner Pitfalls & Troubleshooting**
 
@@ -6830,6 +7822,14 @@ dbt build --select fct_telemetry+
 * **The Problem:** a push is rejected because a file is too large.
 * **Why it Happens:** a Parquet or `.duckdb` file was committed.
 * **The Solution:** remove it from history or tracking and rely on `.gitignore`; data is re-creatable from the pipeline.
+
+* **The Problem (third edition, Windows):** `bash: make: command not found`, and the next command still seems to work.
+* **Why it Happens:** Git Bash has no `make`. The failed line is only one of several in the pasted block, so the later ones ran against whatever fixtures and database were already on disk (the error line scrolls past in a long paste), which is how a stale database produced a test failure that was not a code bug (Chapter 7 pitfall).
+* **The Solution:** run the steps by hand (the generator command above), delete `.ci_raw` first, and read the output of *every* line of a pasted block.
+
+* **The Problem (third edition):** `dbt found 1 package(s) specified in packages.yml, but only 0 package(s) installed` in a fresh `git worktree`.
+* **Why it Happens:** a new checkout has no `dbt_packages/` folder. Comparing against the original commit is the fastest way to tell a regression from an existing failure, but the second checkout needs its own `dbt deps`.
+* **The Solution:** `git worktree add ../f1_baseline HEAD`, then `cd` there, `dbt deps --profiles-dir .`, and build with a different `F1_DUCKDB_PATH`. Remove it afterwards with `git worktree remove --force`.
 
 * **The Problem (second edition):** `make ci-test` stops immediately with `dbt expects 2 package(s) based on packages specified in packages.yml, but found only 0 package(s) installed`.
 * **Why it Happens:** `packages.yml` lists `codegen` (and its dependency `dbt_utils`), and they have not been downloaded into `dbt_packages/` yet.
@@ -6860,8 +7860,8 @@ Before running dbt, **close** SQL tools that hold the DuckDB file.
 
 1. Trigger the Airflow DAG with `latest` (or a specific `session_key`). For a backfill, bound it with `min_session_key` and consider `skip_existing`.
 2. Confirm Parquet files in `airflow/data/raw/` and the run's manifest in `airflow/data/raw/_manifests/`.
-3. `dbt build` (staging, intermediate, marts and their tests). Warnings about plausibility are signals to read, not necessarily bugs.
-4. For telemetry on a large dataset: `dbt run --select fct_telemetry --vars '{telemetry_only_sessions: [<session_key>]}'` for the sessions you need, then `dbt build --select fct_telemetry+`. Then, if you want the partitioned Parquet lake, the export with `--vars`.
+3. `dbt build` (staging, intermediate, marts and their tests), or let Airflow do it: tick `run_dbt_build` and it builds only the sessions the run wrote (Chapter 8). Warnings about plausibility are signals to read, not necessarily bugs.
+4. For telemetry on a large dataset: `dbt run --select fct_telemetry --vars '{session_keys: [<session_key>]}'` for the sessions you need, then `dbt build --select fct_telemetry+`. Then, if you want the partitioned Parquet lake, the export with `--vars`.
 5. Look at the results: Power BI, Harlequin, the Streamlit dashboards (`make dashboard`), or ask MetricFlow (`mf query ...`).
 6. When you have something to decide: `make strategy SESSION=<a real session key>`.
 7. Before a pull request: `make ci-test`.
@@ -6915,6 +7915,14 @@ dbt build
 | BigQuery: `NULL` where DuckDB gives a value | `LEAST(x, NULL)` is `NULL` on BigQuery | 10 |
 | `failed to add job: job ... is already created` | A retry hid the real first error; run with retries off | 10 |
 | `dbt expects 2 package(s) ...` | Run `dbt deps` once | 11 |
+| `verify_and_load` returns `'results': []` and `run_dbt_build` logs `keys=[]`, though files were written | the results were flattened as plain lists, but Airflow passes lazy sequences | 3, 8 |
+| `Invalid session key: ...` at compile time | `session_keys` must be a list of positive integers | 7, 8 |
+| `--full-refresh together with session_keys ...` compile error | refused on purpose: it would drop every other session | 7 |
+| `dbt_full_refresh rebuilds every model ... allow_large_backfill` | a full refresh is behind the large-backfill guard | 8 |
+| A telemetry test fails after changing incremental logic, and the models downstream of it are skipped | the incremental filter kept stale rows from an older build; rebuild from clean state or re-run the sessions with `session_keys` | 7, 11 |
+| A scoped run deletes a session's rows and loads none | its raw files are gone; the pre-delete made the table match | 7 |
+| `docker compose exec ... /opt/...: No such file` in Git Bash | Git Bash rewrote the path; use `MSYS_NO_PATHCONV=1` | 8 |
+| Scoped run takes about 20 minutes in Docker | slow file access through the bind mount, plus a re-scan of the raw files | 8 |
 
 ---
 
@@ -6923,10 +7931,10 @@ dbt build
 ```text
 f1_data_project/
 ├── .github/workflows/
-│   ├── ci.yml                                      tests on every pull request
+│   ├── ci.yml                                      tests, truncation guard and equivalence check on every pull request
 │   └── deploy_to_composer.yml                      manual only                           [CODE FINAL, RUN NOT CONFIRMED]
 ├── .gitignore
-├── Makefile                                        make ci-test, dashboard, strategy, semantic-validate, bq-emulator-test
+├── Makefile                                        make ci-test, scoped-check, dashboard, strategy, semantic-validate, bq-emulator-test
 ├── README.md
 ├── analytics/
 │   ├── f1_strategy/                                Monte Carlo strategy simulator (model, simulate, optimize, calibrate, cli)
@@ -6942,27 +7950,30 @@ f1_data_project/
 │   │   ├── dbt_cosmos_dag.py                       optional Cosmos DAG                   [CODE FINAL, RUN NOT CONFIRMED]
 │   │   └── modules/
 │   │       ├── universal_extractor.py              (event_extractor.py is the Chapter 2 first version)
-│   │       ├── pipeline_utils.py                   manifest + failure notification
+│   │       ├── pipeline_utils.py                   manifest (with extraction statuses) + failure notification
+│   │       ├── dbt_scope.py                        run results -> dbt scope -> dbt commands (no Airflow import)
+│   │       ├── dbt_runner.py                       runs the planned dbt commands: argument lists, no shell
 │   │       ├── radio_transcriber.py                opt-in speech-to-text                 [CODE FINAL, RUN NOT CONFIRMED]
 │   │       └── gcs_loader.py                       upload to GCS                         [CODE FINAL, RUN NOT CONFIRMED]
 │   ├── plugins/
 │   │   ├── hooks/openf1_hook.py
 │   │   └── slack_alerts.py                         Slack failure callback used by the DAG
-│   ├── tests/                                      extractor, manifest, GCS, radio, BigQuery loader tests
+│   ├── tests/                                      extractor, manifest, dbt scope, dbt runner, GCS, radio, BigQuery loader tests
 │   └── data/raw/                                   Parquet files from Airflow (and _manifests/)
 ├── dashboards/
 │   ├── app.py                                      streamlit run dashboards/app.py
 │   ├── f1_dash/                                    data.py, charts/, components/, workspaces/<role>/<phase>.py, insights.py, state.py, provenance.py, theme.py
 │   └── tests/
 ├── dbt_f1_transformations/
-│   ├── dbt_project.yml                             materialisations + every tunable assumption (vars)
+│   ├── dbt_project.yml                             materialisations, the telemetry_group tags, the session_keys var and every tunable assumption
 │   ├── profiles.yml                                dev / container / ci / bigquery / bigquery_emulator targets
 │   ├── packages.yml
 │   ├── seeds/f1_points_system.csv                  season-aware Race and Sprint points scales
 │   ├── macros/
 │   │   ├── portable.sql                            cross-database macros (DuckDB and BigQuery)
 │   │   ├── export_fct_telemetry.sql
-│   │   ├── delete_sessions_from_incrementals.sql
+│   │   ├── scope.sql                               the session scope: in_scope, telemetry_load_filter, scoped_pre_delete
+│   │   ├── delete_sessions_from_incrementals.sql   every incremental model tagged telemetry_group
 │   │   └── emulator_overrides.sql                  test-only
 │   ├── models/
 │   │   ├── metricflow_time_spine.sql
@@ -6973,13 +7984,16 @@ f1_data_project/
 │   │   │   ├── analytics/      fct_*.sql, dim_session_corners.sql
 │   │   │   └── schema.yml
 │   │   └── semantic/           semantic_models.yml, metrics.yml, time_spine.yml
-│   ├── tests/                  singular tests; generic/unique_combination_of_columns.sql
+│   ├── tests/                  singular tests; generic/unique_combination_of_columns.sql, not_null_in_scope.sql
 │   └── ci/
 │       ├── generate_fixtures.py                    the synthetic OpenF1 dataset
+│       ├── check_scoped_views.py                   truncation guard: no table may read scoped data
+│       ├── scoped_equivalence_check.py             scoped rebuild == full build, on copies
+│       ├── tests/                                  tests for the guard
 │       ├── semantic_check.py                       MetricFlow results vs hand-written SQL
 │       ├── bq_emulator_runner.py                   runs dbt-bigquery against the emulator
 │       └── bigquery_emulator/                      run_tests.sh, prepare.py, compare_duckdb_bigquery.py
-├── docs/                   ANALYTICS_GUIDE.md, CHANGES.md, ISSUES_CHECKLIST.md, example_queries.sql, architecture.mmd
+├── docs/                   ANALYTICS_GUIDE.md, CHANGES.md, ISSUES_CHECKLIST.md, SESSION_SCOPED_BUILDS.md, example_queries.sql, architecture.mmd
 ├── opentofu/               main.tf (GCS bucket + BigQuery datasets), provider.tf, variables.tf, terraform.tfvars
 ├── output/telemetry_data/  (partitioned Parquet lake)
 ├── scripts/
@@ -7048,7 +8062,14 @@ f1_data_project/
 * **Optimizer barrier:** a construct such as `OFFSET 0` that stops a query optimizer from rewriting across it.
 * **Portable SQL:** SQL written (here through macros) so one project runs on more than one engine.
 * **Representative lap:** a clean, comparable lap: not the first, an in-lap or out-lap, nor under yellow, safety car or red flag, and not a slow outlier.
-* **Opt-in session build:** telemetry built only for chosen sessions (`telemetry_only_sessions`), so a failure loses one small build, not the whole run.
+* **Opt-in session build:** telemetry built only for chosen sessions, so a failure loses one small build, not the whole run. Since the third edition it is driven by the `session_keys` scope (`telemetry_only_sessions` is the old name).
+* **Equivalence check:** rebuilding one session through the scoped path and comparing every table with a fresh full build; it also checks that other sessions are untouched.
+* **Replace-by-session:** delete a session's rows and insert the new ones, so a re-run refreshes the session with no duplicates and no stale rows.
+* **Scope (dbt):** the list of sessions a run changed, passed as the variable `session_keys`. With no scope the project behaves as before.
+* **Structured extraction result:** `{endpoint, session_key, path, status}` with status `written`, `skipped` or `empty`; the input of the dbt scope.
+* **Telemetry group:** the two scoped staging views and the six incremental telemetry models, tagged `telemetry_group`.
+* **Trigger rule (Airflow):** the condition under which a task runs given the state of its upstream tasks; `none_failed` runs unless one failed.
+* **Truncation guard:** the check that no `table` model reads a scoped view, because it would silently lose every session outside the scope.
 * **Semantic layer:** one governed, named definition of each business metric that every tool asks for.
 * **Spine (analytical):** the model that carries every fact about a unit (here, `int_lap_context`, one row per driver per lap) for all downstream models to read.
 * **Undercut / overcut:** stopping earlier than a rival to gain on fresh tyres, or staying out longer to gain when the rival's stop is slower.

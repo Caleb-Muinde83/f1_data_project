@@ -243,3 +243,6 @@ logs/
 diagnostics_output.txt
 diagnostics_real_data.sql
 run_diagnostics.py
+persisted_sizes.txt
+raw_survey.py
+run_query.py
